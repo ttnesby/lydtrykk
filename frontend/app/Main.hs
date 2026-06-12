@@ -9,6 +9,7 @@ import Miso
 import qualified Miso.Html as H
 import qualified Miso.Html.Event as E
 import qualified Miso.Html.Property as P
+import Data.Maybe (fromMaybe)
 import Miso.Lens
 import Numeric (showFFloat)
 import Text.Read (readMaybe)
@@ -60,7 +61,7 @@ startModel =
   Model
     { _nivaaTekst = "50",
       _monteringValg = Frittstaaende,
-      _vinkelValg = rettFrem,
+      _vinkelValg = startVinkel,
       _valgtKlasse = KlasseC,
       _avstandTekst = "6"
     }
@@ -106,6 +107,16 @@ visDb d = desimal (dBA d) <> " dBA"
 
 visMeter :: Meter -> MisoString
 visMeter r = desimal (meter r) <> " m"
+
+-- | Slideren starter på 45° — vinkler under gir uansett ingen korreksjon,
+-- så venstre endepunkt betyr «45° eller mindre».
+startVinkel :: Vinkel
+startVinkel = fromMaybe rettFrem (nyVinkel 45)
+
+visVinkel :: Vinkel -> MisoString
+visVinkel v
+  | grader v <= 45 = "≤ 45°"
+  | otherwise = ms (show (round (grader v) :: Int)) <> "°"
 
 tidsromNavn :: Tidsrom -> MisoString
 tidsromNavn Dag = "Dag (07–19)"
@@ -184,19 +195,21 @@ inndataPanel m =
             [P.for_ "vinkel"]
             [ text
                 ( "Vinkel til nabo relativt viftens hovedretning: "
-                    <> ms (show (round (grader (m ^. vinkelValg)) :: Int))
-                    <> "°"
+                    <> visVinkel (m ^. vinkelValg)
                 )
             ],
           H.input_
             [ P.id_ "vinkel",
               P.type_ "range",
-              P.min_ "0",
+              P.min_ "45",
               P.max_ "90",
               P.step_ "1",
               P.value_ (ms (show (round (grader (m ^. vinkelValg)) :: Int))),
               E.onInput SettVinkel
-            ]
+            ],
+          H.span_
+            [P.class_ "hint"]
+            [text "0–45° gir ingen retningskorreksjon; over 45° øker dempingen lineært til 5 dBA ved 90°."]
         ],
       H.div_
         [P.class_ "felt"]
