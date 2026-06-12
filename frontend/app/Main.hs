@@ -15,8 +15,8 @@ import Text.Read (readMaybe)
 
 data Model = Model
   { _nivaaTekst :: MisoString
-  , _veggmontert :: Bool
-  , _vinkelGrader :: Double
+  , _monteringValg :: Montering
+  , _vinkelValg :: Vinkel
   , _valgtKlasse :: Lydklasse
   , _avstandTekst :: MisoString
   }
@@ -25,11 +25,11 @@ data Model = Model
 nivaaTekst :: Lens Model MisoString
 nivaaTekst = lens _nivaaTekst $ \r f -> r {_nivaaTekst = f}
 
-veggmontert :: Lens Model Bool
-veggmontert = lens _veggmontert $ \r f -> r {_veggmontert = f}
+monteringValg :: Lens Model Montering
+monteringValg = lens _monteringValg $ \r f -> r {_monteringValg = f}
 
-vinkelGrader :: Lens Model Double
-vinkelGrader = lens _vinkelGrader $ \r f -> r {_vinkelGrader = f}
+vinkelValg :: Lens Model Vinkel
+vinkelValg = lens _vinkelValg $ \r f -> r {_vinkelValg = f}
 
 valgtKlasse :: Lens Model Lydklasse
 valgtKlasse = lens _valgtKlasse $ \r f -> r {_valgtKlasse = f}
@@ -59,8 +59,8 @@ startModel :: Model
 startModel =
   Model
     { _nivaaTekst = "53"
-    , _veggmontert = True
-    , _vinkelGrader = 0
+    , _monteringValg = Veggmontert
+    , _vinkelValg = rettFrem
     , _valgtKlasse = KlasseC
     , _avstandTekst = "10"
     }
@@ -68,9 +68,10 @@ startModel =
 updateModel :: Action -> Effect parent props Model Action
 updateModel = \case
   SettNivaa s -> nivaaTekst .= s
-  SettVeggmontert (Checked b) -> veggmontert .= b
-  SettVinkel s -> case parseDouble s of
-    Just v -> vinkelGrader .= klamp 0 90 v
+  SettVeggmontert (Checked b) ->
+    monteringValg .= if b then Veggmontert else Frittstaaende
+  SettVinkel s -> case nyVinkel =<< parseDouble s of
+    Just v -> vinkelValg .= v
     Nothing -> pure ()
   SettKlasse k -> valgtKlasse .= k
   SettAvstand s -> avstandTekst .= s
@@ -83,17 +84,28 @@ parseDouble = readMaybe . fromMisoString
 klamp :: Double -> Double -> Double -> Double
 klamp lo hi = max lo . min hi
 
--- | Effektivt kildenivå (inkl. evt. veggtillegg), hvis input er gyldig.
-kildenivaa :: Model -> Maybe Double
-kildenivaa m = do
+-- | Kilden slik den er beskrevet i inndata-panelet, hvis nivået er gyldig.
+kilde :: Model -> Maybe Kilde
+kilde m = do
   v <- parseDouble (m ^. nivaaTekst)
-  pure (effektivtKildenivaa (m ^. veggmontert) (klamp 40 70 v))
+  pure
+    Kilde
+      { oppgittNivaa = Desibel (klamp 40 70 v)
+      , referanseavstand = standardR0
+      , montering = m ^. monteringValg
+      }
 
 -- | Tall med én desimal og norsk desimaltegn.
 desimal :: Double -> MisoString
 desimal x = ms (map punktumTilKomma (showFFloat (Just 1) x ""))
   where
     punktumTilKomma c = if c == '.' then ',' else c
+
+visDb :: Desibel -> MisoString
+visDb d = desimal (dBA d) <> " dBA"
+
+visMeter :: Meter -> MisoString
+visMeter r = desimal (meter r) <> " m"
 
 tidsromNavn :: Tidsrom -> MisoString
 tidsromNavn Dag = "Dag (07–19)"
@@ -108,16 +120,16 @@ viewModel _ m =
     [P.class_ "app"]
     [ H.h1_ [] [text "Varmepumpe: lydnivå og avstand (NS 8175)"]
     , inndataPanel m
-    , case kildenivaa m of
+    , case kilde m of
         Nothing ->
           H.section_
             [P.class_ "panel"]
             [H.p_ [P.class_ "feil"] [text "Oppgi gyldig lydnivå (40–70 dBA)."]]
-        Just lp0 ->
+        Just k ->
           H.div_
             []
-            [ modusA m lp0
-            , modusB m lp0
+            [ modusA m k
+            , modusB m k
             ]
     , H.p_
         [P.class_ "fotnote"]
@@ -153,7 +165,7 @@ inndataPanel m =
             [P.class_ "sjekk"]
             [ H.input_
                 [ P.type_ "checkbox"
-                , P.checked_ (m ^. veggmontert)
+                , P.checked_ (m ^. monteringValg == Veggmontert)
                 , E.onChecked SettVeggmontert
                 ]
             , text " Veggmontert utedel (+3 dBA refleksjon)"
@@ -162,8 +174,7 @@ inndataPanel m =
             [P.class_ "hint"]
             [ text
                 ( "Effektivt kildenivå: "
-                    <> maybe "–" desimal (kildenivaa m)
-                    <> " dBA"
+                    <> maybe "–" (visDb . effektivtKildenivaa) (kilde m)
                 )
             ]
         ]
@@ -173,7 +184,7 @@ inndataPanel m =
             [P.for_ "vinkel"]
             [ text
                 ( "Vinkel til nabo relativt viftens hovedretning: "
-                    <> ms (show (round (m ^. vinkelGrader) :: Int))
+                    <> ms (show (round (grader (m ^. vinkelValg)) :: Int))
                     <> "°"
                 )
             ]
@@ -183,7 +194,7 @@ inndataPanel m =
             , P.min_ "0"
             , P.max_ "90"
             , P.step_ "1"
-            , P.value_ (ms (show (round (m ^. vinkelGrader) :: Int)))
+            , P.value_ (ms (show (round (grader (m ^. vinkelValg)) :: Int)))
             , E.onInput SettVinkel
             ]
         ]
@@ -214,8 +225,8 @@ inndataPanel m =
     ]
 
 -- | Modus A: nødvendig minsteavstand per tidsrom.
-modusA :: Model -> Double -> View Model Action
-modusA m lp0 =
+modusA :: Model -> Kilde -> View Model Action
+modusA m k =
   H.section_
     [P.class_ "panel"]
     [ H.h2_ [] [text "Avstand for å overholde grense"]
@@ -237,32 +248,32 @@ modusA m lp0 =
         [text "Nattavslag: pumpen slås av kl. 23–07, da er kveldsgrensen dimensjonerende."]
     ]
   where
-    k = m ^. valgtKlasse
-    v = m ^. vinkelGrader
-    avstandFor g = avstand standardR0 lp0 v g
-    rader = [(tidsromNavn t, grense k t) | t <- [Dag, Kveld, Natt]]
+    klasse = m ^. valgtKlasse
+    v = m ^. vinkelValg
+    avstandFor g = avstand k v g
+    rader = [(tidsromNavn t, grense klasse t) | t <- [Dag, Kveld, Natt]]
     stoerst = maximum [avstandFor g | (_, g) <- rader]
     vanligeRader =
       [ rad navn g (avstandFor g == stoerst) "dimensjonerende"
       | (navn, g) <- rader
       ]
     avslagRad =
-      rad "Natt m/ nattavslag" (grense k Kveld) True "dimensjonerende m/ nattavslag"
+      rad "Natt m/ nattavslag" (grense klasse Kveld) True "dimensjonerende m/ nattavslag"
     rad navn g dim merke =
       H.tr_
         [P.class_ (if dim then "dim" else "")]
         [ H.td_ [] [text navn]
-        , H.td_ [] [text (desimal g <> " dBA")]
+        , H.td_ [] [text (visDb g)]
         , H.td_
             []
-            [ text (desimal (avstandFor g) <> " m")
+            [ text (visMeter (avstandFor g))
             , if dim then H.span_ [P.class_ "merke"] [text merke] else text ""
             ]
         ]
 
 -- | Modus B: lydnivå ved gitt avstand, innenfor/utenfor per tidsrom.
-modusB :: Model -> Double -> View Model Action
-modusB m lp0 =
+modusB :: Model -> Kilde -> View Model Action
+modusB m k =
   H.section_
     [P.class_ "panel"]
     [ H.h2_ [] [text "Lydnivå ved gitt avstand"]
@@ -283,10 +294,10 @@ modusB m lp0 =
         Just r -> resultat r
     ]
   where
-    k = m ^. valgtKlasse
-    v = m ^. vinkelGrader
+    klasse = m ^. valgtKlasse
+    v = m ^. vinkelValg
     mr = case parseDouble (m ^. avstandTekst) of
-      Just r | r > 0 -> Just r
+      Just r | r > 0 -> Just (Meter r)
       _ -> Nothing
     resultat r =
       H.div_
@@ -294,7 +305,7 @@ modusB m lp0 =
         [ H.p_
             []
             [ text "Beregnet lydnivå: "
-            , H.strong_ [] [text (desimal nivaa <> " dBA")]
+            , H.strong_ [] [text (visDb nivaa)]
             ]
         , H.table_
             []
@@ -309,19 +320,19 @@ modusB m lp0 =
                 ]
             , H.tbody_
                 []
-                ( [statusRad (tidsromNavn t) (grense k t) | t <- [Dag, Kveld, Natt]]
-                    ++ [statusRad "Natt m/ nattavslag" (grense k Kveld)]
+                ( [statusRad (tidsromNavn t) (grense klasse t) | t <- [Dag, Kveld, Natt]]
+                    ++ [statusRad "Natt m/ nattavslag" (grense klasse Kveld)]
                 )
             ]
         ]
       where
-        nivaa = lydnivaa standardR0 lp0 v r
+        nivaa = lydnivaa k v r
         statusRad navn g =
           let innenfor = nivaa <= g
            in H.tr_
                 []
                 [ H.td_ [] [text navn]
-                , H.td_ [] [text (desimal g <> " dBA")]
+                , H.td_ [] [text (visDb g)]
                 , H.td_
                     [P.class_ (if innenfor then "ok" else "for-hoyt")]
                     [text (if innenfor then "Innenfor" else "Utenfor")]
