@@ -1,0 +1,10 @@
+-- Wasm-bygg: lyd-core + frontend med wasm32-wasi-cabal
+-- (brukes via build.sh: wasm32-wasi-cabal --project-file=cabal.project.wasm ...)
+packages: lyd-core frontend
+
+index-state: 2026-06-01T00:00:00Z
+
+allow-newer: all:base
+
+package miso
+  flags: +template-haskell
