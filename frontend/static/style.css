@@ -3,11 +3,148 @@
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
+* {
+  box-sizing: border-box;
+}
+
 body {
-  margin: 0 auto;
-  max-width: 40rem;
-  padding: 1rem;
+  margin: 0;
+  padding: 0;
   line-height: 1.5;
   color: #1c1c1e;
-  background: #f7f7f8;
+  background: #f2f2f6;
+}
+
+.app {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+h1 {
+  font-size: 1.35rem;
+  line-height: 1.3;
+  margin: 0.5rem 0 1rem;
+}
+
+h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.75rem;
+}
+
+.panel {
+  background: #fff;
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
+}
+
+.felt {
+  margin-bottom: 0.9rem;
+}
+
+.felt:last-child {
+  margin-bottom: 0;
+}
+
+.felt > label,
+.felt > span {
+  display: block;
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.25rem;
+}
+
+.felt label.sjekk,
+.felt label.radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-weight: 400;
+  font-size: 1rem;
+  margin-right: 1rem;
+}
+
+input[type="number"] {
+  width: 100%;
+  max-width: 10rem;
+  font-size: 1.1rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #c7c7cc;
+  border-radius: 8px;
+}
+
+input[type="range"] {
+  width: 100%;
+  max-width: 24rem;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.hint {
+  display: block;
+  font-size: 0.85rem;
+  color: #6e6e73;
+  margin-top: 0.3rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid #e5e5ea;
+  font-size: 0.95rem;
+}
+
+th {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #6e6e73;
+}
+
+tr.dim td {
+  background: #fff8e6;
+  font-weight: 600;
+}
+
+.merke {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #9a6b00;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+td.ok {
+  color: #1a7f37;
+  font-weight: 600;
+}
+
+td.for-hoyt {
+  color: #c40d2e;
+  font-weight: 600;
+}
+
+.feil {
+  color: #c40d2e;
+  font-weight: 600;
+}
+
+.fotnote {
+  font-size: 0.8rem;
+  color: #6e6e73;
+  margin: 1rem 0.25rem;
 }
