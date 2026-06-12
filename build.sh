@@ -28,4 +28,12 @@ cp frontend/static/* dist/
 "$(wasm32-wasi-ghc --print-libdir)"/post-link.mjs --input "$WASM" --output dist/ghc_wasm_jsffi.js
 cp "$WASM" dist/app.wasm
 
+# Krymp binæren (ca. halvering) hvis binaryen er tilgjengelig
+if command -v wasm-opt >/dev/null 2>&1; then
+  wasm-opt -all -Oz dist/app.wasm -o dist/app.wasm.opt
+  mv dist/app.wasm.opt dist/app.wasm
+else
+  echo "advarsel: wasm-opt ikke funnet — hopper over størrelsesoptimalisering" >&2
+fi
+
 echo "dist/ klar — app.wasm: $(du -h dist/app.wasm | cut -f1)"

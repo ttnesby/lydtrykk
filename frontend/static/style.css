@@ -107,6 +107,11 @@ td {
   font-size: 0.95rem;
 }
 
+th:nth-child(n + 2),
+td:nth-child(n + 2) {
+  white-space: nowrap;
+}
+
 th {
   font-size: 0.8rem;
   text-transform: uppercase;
@@ -121,6 +126,7 @@ tr.dim td {
 
 .merke {
   display: block;
+  white-space: normal;
   font-size: 0.72rem;
   font-weight: 600;
   color: #9a6b00;
