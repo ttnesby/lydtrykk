@@ -1,0 +1,83 @@
+name: test-build-deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup native GHC
+        id: setup
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.6.7"
+          cabal-version: "3.12.1.0"
+
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.setup.outputs.cabal-store }}
+            dist-newstyle
+          key: native-${{ runner.os }}-ghc9.6.7-${{ hashFiles('cabal.project', 'lyd-core/lyd-core.cabal') }}
+          restore-keys: |
+            native-${{ runner.os }}-ghc9.6.7-
+
+      - name: Run tests
+        run: cabal test all
+
+  build-deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache ghc-wasm-meta toolchain + wasm cabal store
+        uses: actions/cache@v4
+        with:
+          path: ~/.ghc-wasm
+          key: ghc-wasm-9.12-${{ runner.os }}-${{ hashFiles('cabal.project.wasm', 'frontend/frontend.cabal', 'lyd-core/lyd-core.cabal') }}
+          restore-keys: |
+            ghc-wasm-9.12-${{ runner.os }}-
+
+      - name: Install ghc-wasm-meta (GHC 9.12 flavour)
+        run: |
+          if [ ! -f "$HOME/.ghc-wasm/env" ]; then
+            curl -f -L --retry 5 https://gitlab.haskell.org/haskell-wasm/ghc-wasm-meta/-/raw/master/bootstrap.sh -o /tmp/bootstrap.sh
+            FLAVOUR=9.12 sh /tmp/bootstrap.sh
+          fi
+
+      - name: Build wasm frontend
+        run: ./build.sh
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
