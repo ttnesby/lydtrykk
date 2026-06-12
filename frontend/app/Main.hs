@@ -14,11 +14,11 @@ import Numeric (showFFloat)
 import Text.Read (readMaybe)
 
 data Model = Model
-  { _nivaaTekst :: MisoString
-  , _monteringValg :: Montering
-  , _vinkelValg :: Vinkel
-  , _valgtKlasse :: Lydklasse
-  , _avstandTekst :: MisoString
+  { _nivaaTekst :: MisoString,
+    _monteringValg :: Montering,
+    _vinkelValg :: Vinkel,
+    _valgtKlasse :: Lydklasse,
+    _avstandTekst :: MisoString
   }
   deriving (Eq)
 
@@ -58,11 +58,11 @@ app = component startModel updateModel viewModel
 startModel :: Model
 startModel =
   Model
-    { _nivaaTekst = "53"
-    , _monteringValg = Veggmontert
-    , _vinkelValg = rettFrem
-    , _valgtKlasse = KlasseC
-    , _avstandTekst = "10"
+    { _nivaaTekst = "50",
+      _monteringValg = Frittstaaende,
+      _vinkelValg = rettFrem,
+      _valgtKlasse = KlasseC,
+      _avstandTekst = "6"
     }
 
 updateModel :: Action -> Effect parent props Model Action
@@ -90,9 +90,9 @@ kilde m = do
   v <- parseDouble (m ^. nivaaTekst)
   pure
     Kilde
-      { oppgittNivaa = Desibel (klamp 40 70 v)
-      , referanseavstand = standardR0
-      , montering = m ^. monteringValg
+      { oppgittNivaa = Desibel (klamp 40 70 v),
+        referanseavstand = standardR0,
+        montering = m ^. monteringValg
       }
 
 -- | Tall med én desimal og norsk desimaltegn.
@@ -118,9 +118,9 @@ viewModel :: props -> Model -> View Model Action
 viewModel _ m =
   H.div_
     [P.class_ "app"]
-    [ H.h1_ [] [text "Varmepumpe: lydnivå og avstand (NS 8175)"]
-    , inndataPanel m
-    , case kilde m of
+    [ H.h1_ [] [text "Varmepumpe: lydnivå og avstand (NS 8175)"],
+      inndataPanel m,
+      case kilde m of
         Nothing ->
           H.section_
             [P.class_ "panel"]
@@ -128,10 +128,10 @@ viewModel _ m =
         Just k ->
           H.div_
             []
-            [ modusA m k
-            , modusB m k
-            ]
-    , H.p_
+            [ modusA m k,
+              modusB m k
+            ],
+      H.p_
         [P.class_ "fotnote"]
         [ text
             ( "Forenklet frittfeltmodell (invers kvadratlov). Faktiske forhold "
@@ -145,40 +145,40 @@ inndataPanel :: Model -> View Model Action
 inndataPanel m =
   H.section_
     [P.class_ "panel"]
-    [ H.h2_ [] [text "Inndata"]
-    , H.div_
+    [ H.h2_ [] [text "Inndata"],
+      H.div_
         [P.class_ "felt"]
-        [ H.label_ [P.for_ "nivaa"] [text "Oppgitt lydnivå utedel, 1 m frittfelt (dBA)"]
-        , H.input_
-            [ P.id_ "nivaa"
-            , P.type_ "number"
-            , P.min_ "40"
-            , P.max_ "70"
-            , P.step_ "1"
-            , P.value_ (m ^. nivaaTekst)
-            , E.onInput SettNivaa
+        [ H.label_ [P.for_ "nivaa"] [text "Oppgitt lydnivå utedel, 1 m frittfelt (dBA)"],
+          H.input_
+            [ P.id_ "nivaa",
+              P.type_ "number",
+              P.min_ "40",
+              P.max_ "70",
+              P.step_ "1",
+              P.value_ (m ^. nivaaTekst),
+              E.onInput SettNivaa
             ]
-        ]
-    , H.div_
+        ],
+      H.div_
         [P.class_ "felt"]
         [ H.label_
             [P.class_ "sjekk"]
             [ H.input_
-                [ P.type_ "checkbox"
-                , P.checked_ (m ^. monteringValg == Veggmontert)
-                , E.onChecked SettVeggmontert
-                ]
-            , text " Veggmontert utedel (+3 dBA refleksjon)"
-            ]
-        , H.span_
+                [ P.type_ "checkbox",
+                  P.checked_ (m ^. monteringValg == Veggmontert),
+                  E.onChecked SettVeggmontert
+                ],
+              text " Veggmontert utedel (+3 dBA refleksjon)"
+            ],
+          H.span_
             [P.class_ "hint"]
             [ text
                 ( "Effektivt kildenivå: "
                     <> maybe "–" (visDb . effektivtKildenivaa) (kilde m)
                 )
             ]
-        ]
-    , H.div_
+        ],
+      H.div_
         [P.class_ "felt"]
         [ H.label_
             [P.for_ "vinkel"]
@@ -187,39 +187,39 @@ inndataPanel m =
                     <> ms (show (round (grader (m ^. vinkelValg)) :: Int))
                     <> "°"
                 )
+            ],
+          H.input_
+            [ P.id_ "vinkel",
+              P.type_ "range",
+              P.min_ "0",
+              P.max_ "90",
+              P.step_ "1",
+              P.value_ (ms (show (round (grader (m ^. vinkelValg)) :: Int))),
+              E.onInput SettVinkel
             ]
-        , H.input_
-            [ P.id_ "vinkel"
-            , P.type_ "range"
-            , P.min_ "0"
-            , P.max_ "90"
-            , P.step_ "1"
-            , P.value_ (ms (show (round (grader (m ^. vinkelValg)) :: Int)))
-            , E.onInput SettVinkel
-            ]
-        ]
-    , H.div_
+        ],
+      H.div_
         [P.class_ "felt"]
-        [ H.span_ [] [text "Lydklasse"]
-        , H.label_
+        [ H.span_ [] [text "Lydklasse"],
+          H.label_
             [P.class_ "radio"]
             [ H.input_
-                [ P.type_ "radio"
-                , P.name_ "klasse"
-                , P.checked_ (m ^. valgtKlasse == KlasseC)
-                , E.onClick (SettKlasse KlasseC)
-                ]
-            , text " C (minstekrav)"
-            ]
-        , H.label_
+                [ P.type_ "radio",
+                  P.name_ "klasse",
+                  P.checked_ (m ^. valgtKlasse == KlasseC),
+                  E.onClick (SettKlasse KlasseC)
+                ],
+              text " C (minstekrav)"
+            ],
+          H.label_
             [P.class_ "radio"]
             [ H.input_
-                [ P.type_ "radio"
-                , P.name_ "klasse"
-                , P.checked_ (m ^. valgtKlasse == KlasseB)
-                , E.onClick (SettKlasse KlasseB)
-                ]
-            , text " B (anbefalt)"
+                [ P.type_ "radio",
+                  P.name_ "klasse",
+                  P.checked_ (m ^. valgtKlasse == KlasseB),
+                  E.onClick (SettKlasse KlasseB)
+                ],
+              text " B (anbefalt)"
             ]
         ]
     ]
@@ -229,21 +229,21 @@ modusA :: Model -> Kilde -> View Model Action
 modusA m k =
   H.section_
     [P.class_ "panel"]
-    [ H.h2_ [] [text "Avstand for å overholde grense"]
-    , H.table_
+    [ H.h2_ [] [text "Avstand for å overholde grense"],
+      H.table_
         []
         [ H.thead_
             []
             [ H.tr_
                 []
-                [ H.th_ [] [text "Tidsrom"]
-                , H.th_ [] [text "Grense"]
-                , H.th_ [] [text "Minsteavstand"]
+                [ H.th_ [] [text "Tidsrom"],
+                  H.th_ [] [text "Grense"],
+                  H.th_ [] [text "Minsteavstand"]
                 ]
-            ]
-        , H.tbody_ [] (vanligeRader ++ [avslagRad])
-        ]
-    , H.p_
+            ],
+          H.tbody_ [] (vanligeRader ++ [avslagRad])
+        ],
+      H.p_
         [P.class_ "hint"]
         [text "Nattavslag: pumpen slås av kl. 23–07, da er kveldsgrensen dimensjonerende."]
     ]
@@ -262,12 +262,12 @@ modusA m k =
     rad navn g dim merke =
       H.tr_
         [P.class_ (if dim then "dim" else "")]
-        [ H.td_ [] [text navn]
-        , H.td_ [] [text (visDb g)]
-        , H.td_
+        [ H.td_ [] [text navn],
+          H.td_ [] [text (visDb g)],
+          H.td_
             []
-            [ text (visMeter (avstandFor g))
-            , if dim then H.span_ [P.class_ "merke"] [text merke] else text ""
+            [ text (visMeter (avstandFor g)),
+              if dim then H.span_ [P.class_ "merke"] [text merke] else text ""
             ]
         ]
 
@@ -276,20 +276,20 @@ modusB :: Model -> Kilde -> View Model Action
 modusB m k =
   H.section_
     [P.class_ "panel"]
-    [ H.h2_ [] [text "Lydnivå ved gitt avstand"]
-    , H.div_
+    [ H.h2_ [] [text "Lydnivå ved gitt avstand"],
+      H.div_
         [P.class_ "felt"]
-        [ H.label_ [P.for_ "avstand"] [text "Avstand til nabo (meter)"]
-        , H.input_
-            [ P.id_ "avstand"
-            , P.type_ "number"
-            , P.min_ "0.5"
-            , P.step_ "0.5"
-            , P.value_ (m ^. avstandTekst)
-            , E.onInput SettAvstand
+        [ H.label_ [P.for_ "avstand"] [text "Avstand til nabo (meter)"],
+          H.input_
+            [ P.id_ "avstand",
+              P.type_ "number",
+              P.min_ "0.5",
+              P.step_ "0.5",
+              P.value_ (m ^. avstandTekst),
+              E.onInput SettAvstand
             ]
-        ]
-    , case mr of
+        ],
+      case mr of
         Nothing -> H.p_ [P.class_ "feil"] [text "Oppgi gyldig avstand (> 0 m)."]
         Just r -> resultat r
     ]
@@ -304,21 +304,21 @@ modusB m k =
         []
         [ H.p_
             []
-            [ text "Beregnet lydnivå: "
-            , H.strong_ [] [text (visDb nivaa)]
-            ]
-        , H.table_
+            [ text "Beregnet lydnivå: ",
+              H.strong_ [] [text (visDb nivaa)]
+            ],
+          H.table_
             []
             [ H.thead_
                 []
                 [ H.tr_
                     []
-                    [ H.th_ [] [text "Tidsrom"]
-                    , H.th_ [] [text "Grense"]
-                    , H.th_ [] [text "Status"]
+                    [ H.th_ [] [text "Tidsrom"],
+                      H.th_ [] [text "Grense"],
+                      H.th_ [] [text "Status"]
                     ]
-                ]
-            , H.tbody_
+                ],
+              H.tbody_
                 []
                 ( [statusRad (tidsromNavn t) (grense klasse t) | t <- [Dag, Kveld, Natt]]
                     ++ [statusRad "Natt m/ nattavslag" (grense klasse Kveld)]
@@ -331,9 +331,9 @@ modusB m k =
           let innenfor = nivaa <= g
            in H.tr_
                 []
-                [ H.td_ [] [text navn]
-                , H.td_ [] [text (visDb g)]
-                , H.td_
+                [ H.td_ [] [text navn],
+                  H.td_ [] [text (visDb g)],
+                  H.td_
                     [P.class_ (if innenfor then "ok" else "for-hoyt")]
                     [text (if innenfor then "Innenfor" else "Utenfor")]
                 ]
