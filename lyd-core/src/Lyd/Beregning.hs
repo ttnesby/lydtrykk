@@ -25,10 +25,17 @@ module Lyd.Beregning
     lydnivaa,
     avstand,
 
+    -- * Avstandstabell (vinkel × tidsrom × klasse)
+    noenVinkler,
+    AvstandsRad (..),
+    avstandsTabell,
+
     -- * Flere kilder
     kumulativ,
   )
 where
+
+import Data.Maybe (mapMaybe)
 
 -- | Tidsrom i døgnet slik NS 8175 deler dem inn:
 -- dag 07–19, kveld 19–23, natt 23–07.
@@ -128,6 +135,35 @@ avstand kilde v (Desibel lp) =
   where
     Desibel lp0 = effektivtKildenivaa kilde
     Meter r0 = referanseavstand kilde
+
+-- | Standard vinkelsett for avstandstabellen: rett frem, så 50–90° i steg
+-- på 10°. Som i den verifiserte notatboken (@noenVinkler@).
+noenVinkler :: [Vinkel]
+noenVinkler = mapMaybe nyVinkel [0, 50, 60, 70, 80, 90]
+
+-- | Én undertabell i avstandstabellen: et tidsrom med sin grenseverdi, og
+-- nødvendig minsteavstand for hver vinkel i settet.
+data AvstandsRad = AvstandsRad
+  { arTidsrom :: Tidsrom,
+    arGrense :: Desibel,
+    arCeller :: [(Vinkel, Meter)]
+  }
+  deriving (Eq, Show)
+
+-- | Avstandstabell for én lydklasse: én 'AvstandsRad' per tidsrom
+-- (Dag, Kveld, Natt), der hver celle er minsteavstanden for å overholde
+-- tidsrommets grense i den gitte vinkelen. Cellene bruker kildens effektive
+-- nivå, så veggmontering slår inn her som ellers.
+avstandsTabell :: Kilde -> [Vinkel] -> Lydklasse -> [AvstandsRad]
+avstandsTabell kilde vinkler klasse =
+  [ AvstandsRad
+      { arTidsrom = t,
+        arGrense = g,
+        arCeller = [(v, avstand kilde v g) | v <- vinkler]
+      }
+  | t <- [Dag, Kveld, Natt],
+    let g = grense klasse t
+  ]
 
 -- | Kumulativt lydnivå for flere kilder:
 -- @ltot = 10 * log10 (sum [10**(l/10) | l <- ls])@.
