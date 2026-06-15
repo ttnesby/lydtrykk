@@ -123,6 +123,14 @@ tidsromNavn Dag = "Dag (07–19)"
 tidsromNavn Kveld = "Kveld (19–23)"
 tidsromNavn Natt = "Natt (23–07)"
 
+klasseNavn :: Lydklasse -> MisoString
+klasseNavn KlasseC = "Klasse C (minstekrav)"
+klasseNavn KlasseB = "Klasse B (anbefalt)"
+
+-- | Faktiske vinkelgrader for tabellen, f.eks. «0°», «50°».
+vinkelGrad :: Vinkel -> MisoString
+vinkelGrad v = ms (show (round (grader v) :: Int)) <> "°"
+
 -- Visning -----------------------------------------------------------------
 
 viewModel :: props -> Model -> View Model Action
@@ -140,7 +148,8 @@ viewModel _ m =
           H.div_
             []
             [ modusA m k,
-              modusB m k
+              modusB m k,
+              modusC k
             ],
       H.p_
         [P.class_ "fotnote"]
@@ -350,3 +359,51 @@ modusB m k =
                     [P.class_ (if innenfor then "ok" else "for-hoyt")]
                     [text (if innenfor then "Innenfor" else "Utenfor")]
                 ]
+
+-- | Modus C: minsteavstand for et fast vinkelsett, Klasse C og B side om
+-- side, én undertabell per tidsrom — som notatbokens grid.
+modusC :: Kilde -> View Model Action
+modusC k =
+  H.section_
+    [P.class_ "panel"]
+    [ H.h2_ [] [text "Avstandstabell — vinkel og lydklasse"],
+      H.div_
+        [P.class_ "tabell-kolonner"]
+        [klasseKolonne k klasse | klasse <- [KlasseC, KlasseB]],
+      H.p_
+        [P.class_ "hint"]
+        [text "Minsteavstand (m) for å overholde grensen i hvert tidsrom, ved faste vinkler relativt viftens hovedretning. Følger effektivt kildenivå (inkl. veggmontering)."]
+    ]
+
+-- | Én klasse-kolonne: overskrift og tre undertabeller (Dag/Kveld/Natt).
+klasseKolonne :: Kilde -> Lydklasse -> View Model Action
+klasseKolonne k klasse =
+  H.div_
+    [P.class_ "tabell-kolonne"]
+    ( H.h3_ [] [text (klasseNavn klasse)]
+        : [undertabell rad | rad <- avstandsTabell k noenVinkler klasse]
+    )
+
+-- | Én undertabell for ett tidsrom: grensen i bildeteksten, vinkel → avstand.
+undertabell :: AvstandsRad -> View Model Action
+undertabell rad =
+  H.table_
+    []
+    [ H.thead_
+        []
+        [ H.tr_
+            []
+            [ H.th_ [] [text (tidsromNavn (arTidsrom rad) <> " · " <> visDb (arGrense rad))],
+              H.th_ [] [text "Avstand"]
+            ]
+        ],
+      H.tbody_
+        []
+        [ H.tr_
+            []
+            [ H.td_ [] [text (vinkelGrad v)],
+              H.td_ [] [text (visMeter r)]
+            ]
+        | (v, r) <- arCeller rad
+        ]
+    ]

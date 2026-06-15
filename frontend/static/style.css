@@ -149,6 +149,40 @@ td.for-hoyt {
   font-weight: 600;
 }
 
+.tabell-kolonner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 32rem) {
+  .tabell-kolonner {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tabell-kolonne h3 {
+  font-size: 0.95rem;
+  margin: 0 0 0.5rem;
+}
+
+.tabell-kolonne table {
+  margin-bottom: 0.9rem;
+}
+
+.tabell-kolonne table:last-child {
+  margin-bottom: 0;
+}
+
+.tabell-kolonne th {
+  font-size: 0.72rem;
+}
+
+.tabell-kolonne td,
+.tabell-kolonne th {
+  padding: 0.3rem 0.4rem;
+}
+
 .fotnote {
   font-size: 0.8rem;
   color: #6e6e73;
