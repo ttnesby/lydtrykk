@@ -12,7 +12,7 @@ tests :: TestTree
 tests =
   testGroup
     "lyd-core"
-    [grenseTests, vinkelTests, kildeTests, gylneVerdier, egenskaper, kumulativTests]
+    [grenseTests, vinkelTests, kildeTests, gylneVerdier, tabellTests, egenskaper, kumulativTests]
 
 grenseTests :: TestTree
 grenseTests =
@@ -86,6 +86,49 @@ gylneVerdier =
             (50, 30, 0, 10.00)
           ]
     ]
+
+-- | Slå opp avstanden for en gitt vinkel (grader) i en 'AvstandsRad',
+-- avrundet til to desimaler.
+celle :: AvstandsRad -> Double -> Maybe Double
+celle rad g =
+  rund2 . meter . snd
+    <$> lookupBy (\(v, _) -> grader v == g) (arCeller rad)
+  where
+    lookupBy p = foldr (\x acc -> if p x then Just x else acc) Nothing
+
+-- | Avstandstabellen reproduserer notatbokens grid for lp0 = 44, r0 = 1
+-- (frittstående), jf. @avstandVedLydnivaaOgVinkelKlassCOgBGrid[44, 1, …]@.
+tabellTests :: TestTree
+tabellTests =
+  testGroup
+    "avstandstabell (lp0 = 44, r0 = 1, 2 desimaler)"
+    [ testCase "noenVinkler = 0,50,60,70,80,90" $
+        map grader noenVinkler @?= [0, 50, 60, 70, 80, 90],
+      testCase "tre rader per klasse (Dag/Kveld/Natt)" $
+        map arTidsrom (avstandsTabell (frittstaaende 44) noenVinkler KlasseC)
+          @?= [Dag, Kveld, Natt],
+      testGroup "gylne celler fra bildet" $
+        [ testCase (show klasse ++ " " ++ show t ++ " @ " ++ show v ++ "°") $
+            celle (rad klasse t) v @?= Just forventet
+          | (klasse, t, v, forventet) <-
+              [ -- Klasse C: Dag 45, Kveld 40, Natt 35
+                (KlasseC, Dag, 0, 0.89),
+                (KlasseC, Dag, 90, 0.50),
+                (KlasseC, Kveld, 0, 1.58),
+                (KlasseC, Natt, 0, 2.82),
+                (KlasseC, Natt, 90, 1.58),
+                -- Klasse B: Dag 40, Kveld 35, Natt 30
+                (KlasseB, Dag, 0, 1.58),
+                (KlasseB, Kveld, 0, 2.82),
+                (KlasseB, Kveld, 90, 1.58),
+                (KlasseB, Natt, 0, 5.01),
+                (KlasseB, Natt, 90, 2.82)
+              ]
+        ]
+    ]
+  where
+    tabell klasse = avstandsTabell (frittstaaende 44) noenVinkler klasse
+    rad klasse t = head [r | r <- tabell klasse, arTidsrom r == t]
 
 -- | Generator for gyldige (kilde, mål-nivå, vinkel) iht. §2.5.
 gyldigInput :: Gen (Kilde, Desibel, Vinkel)
