@@ -121,6 +121,14 @@
     </div>
 
     <div class="grp">
+      <label class="l">Lagre / last oppsett</label>
+      <button class="btn" id="save">Lagre til fil</button>
+      <button class="btn" id="load">Last fra fil</button>
+      <input type="file" id="loadfile" accept=".json,application/json" hidden>
+      <p class="note">Lagrer alt – soner, modus, montering, alle utedeler (plassering + vinkel), naboer og kartutsnitt – som en JSON-fil i nedlastingsmappa. «Last fra fil» setter alt tilbake til lagret tilstand.</p>
+    </div>
+
+    <div class="grp">
       <label class="l">Les dette ærlig</label>
       <p class="note">• Et <b>nabopunkt</b> viser den logaritmiske summen av alle utedelene – to pumper på 35 dBA hver gir ~38 dBA samlet.<br>
       • Selv <b>under</b> grenseverdiene blir inntil ~20 % sjenert av lydnivået.<br>
@@ -238,8 +246,9 @@ let nabPend=false;
 function scheduleNabos(){ if(nabPend)return; nabPend=true; requestAnimationFrame(()=>{nabPend=false; recomputeNabos();}); }
 
 // ---- pumper ----
-function addPump(latlng){
-  const brg=parseInt(document.getElementById('defdir').value,10), num=++pumpNo;
+function addPump(latlng,brg,num){
+  if(brg==null) brg=parseInt(document.getElementById('defdir').value,10);
+  if(num==null) num=++pumpNo;
   const m=L.marker(latlng,{icon:arrowIcon(brg,num),draggable:true}).addTo(map);
   const zones={}; BANDS.forEach(b=>{ zones[b.key]=L.polygon([],{color:b.color,weight:1.5,fillColor:b.color,fillOpacity:.08}); });
   const p={id:num,num:num,marker:m,zones:zones,latlng:latlng,brg:brg,row:null};
@@ -264,8 +273,8 @@ function removePump(id){
 }
 
 // ---- naboer ----
-function addNabo(latlng){
-  const num=++nabNo;
+function addNabo(latlng,num){
+  if(num==null) num=++nabNo;
   const m=L.marker(latlng,{draggable:true,icon:naboIcon(num)}).addTo(map);
   m.bindTooltip('',{permanent:true,direction:'top',offset:[0,-9],className:'nbtt'});
   const n={id:num,num:num,marker:m,latlng:latlng};
@@ -350,6 +359,68 @@ const dd=document.getElementById('defdir'); dd.addEventListener('input',()=>docu
 document.getElementById('clear').addEventListener('click',()=>{
   [...pumps].forEach(p=>removePump(p.id)); [...nabos].forEach(n=>removeNabo(n.id));
   pumpNo=0; nabNo=0;
+});
+
+// ---- lagre / laste oppsett (JSON til/fra nedlastingsmappa) ----
+function snapshot(){
+  const c=map.getCenter();
+  return {
+    format:'lydnivakart', version:1, savedAt:new Date().toISOString(),
+    settings:{
+      bands:{...bandsOn},
+      mode:document.getElementById('mode').value,
+      mount:document.querySelector('#mount .on').dataset.v,
+      defdir:parseInt(document.getElementById('defdir').value,10),
+    },
+    pumps:pumps.map(p=>({num:p.num,lat:p.latlng.lat,lng:p.latlng.lng,brg:p.brg})),
+    nabos:nabos.map(n=>({num:n.num,lat:n.latlng.lat,lng:n.latlng.lng})),
+    view:{center:[c.lat,c.lng],zoom:map.getZoom()},
+  };
+}
+function restore(d){
+  if(!d || d.format!=='lydnivakart'){ alert('Ukjent filformat – forventet et lydnivakart-oppsett.'); return; }
+  // tøm nåværende tilstand
+  [...pumps].forEach(p=>removePump(p.id)); [...nabos].forEach(n=>removeNabo(n.id));
+  pumpNo=0; nabNo=0; sel=null;
+  const s=d.settings||{};
+  // soner
+  if(s.bands) BANDS.forEach(b=>{
+    const v=!!s.bands[b.key]; bandsOn[b.key]=v;
+    const cb=document.querySelector(`#bands input[data-k="${b.key}"]`); if(cb) cb.checked=v;
+  });
+  // driftsmodus
+  if(s.mode!=null) document.getElementById('mode').value=String(s.mode);
+  // montering
+  if(s.mount!=null) document.querySelectorAll('#mount button').forEach(b=>
+    b.classList.toggle('on',b.dataset.v===String(s.mount)));
+  // standardretning
+  if(s.defdir!=null){ const dd=document.getElementById('defdir');
+    dd.value=s.defdir; document.getElementById('defdirv').textContent=s.defdir+'°'; }
+  // pumper og naboer
+  (d.pumps||[]).forEach(p=>{ addPump(L.latLng(p.lat,p.lng),p.brg,p.num); });
+  (d.nabos||[]).forEach(n=>{ addNabo(L.latLng(n.lat,n.lng),n.num); });
+  pumpNo=pumps.reduce((m,p)=>Math.max(m,p.num),0);
+  nabNo=nabos.reduce((m,n)=>Math.max(m,n.num),0);
+  sel=null; positionHandle();
+  // kartutsnitt
+  if(d.view&&d.view.center) map.setView(d.view.center,d.view.zoom);
+  redrawAll(); recomputeNabos();
+}
+function stamp(){ const p=n=>String(n).padStart(2,'0'); const t=new Date();
+  return `${t.getFullYear()}${p(t.getMonth()+1)}${p(t.getDate())}-${p(t.getHours())}${p(t.getMinutes())}`; }
+document.getElementById('save').addEventListener('click',()=>{
+  const blob=new Blob([JSON.stringify(snapshot(),null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download=`lydnivakart-${stamp()}.json`; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),0);
+});
+document.getElementById('load').addEventListener('click',()=>document.getElementById('loadfile').click());
+document.getElementById('loadfile').addEventListener('change',e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ try{ restore(JSON.parse(r.result)); }catch(err){ alert('Kunne ikke lese fila: '+err.message); } };
+  r.readAsText(f);
+  e.target.value='';   // tillat å laste samme fil på nytt
 });
 
 updateReadout();   // første visning (JS-fallback); WASM-init kaller redrawAll() når klar
