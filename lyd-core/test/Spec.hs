@@ -12,7 +12,7 @@ tests :: TestTree
 tests =
   testGroup
     "lyd-core"
-    [grenseTests, vinkelTests, kildeTests, gylneVerdier, tabellTests, egenskaper, kumulativTests]
+    [grenseTests, vinkelTests, kildeTests, gylneVerdier, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper]
 
 grenseTests :: TestTree
 grenseTests =
@@ -156,6 +156,37 @@ egenskaper =
           forAll (choose (45.01, 89) `suchThatMap` nyVinkel) $ \v1 ->
             forAll (choose (grader v1 + 0.01, 90) `suchThatMap` nyVinkel) $ \v2 ->
               avstand kilde v1 lp > avstand kilde v2 lp
+    ]
+
+-- | Egenskaper kart-simulatoren hviler på. Den deler nøyaktig disse
+-- funksjonene via WASM, så her sikrer vi modellens grunnantakelser.
+simulatorEgenskaper :: TestTree
+simulatorEgenskaper =
+  testGroup
+    "simulator-kjerne (delt med kartet)"
+    [ testProperty "lydnivaa strengt synkende i avstand" $
+        forAll gyldigInput $ \(kilde, _, v) ->
+          forAll (choose (1, 50)) $ \r1 ->
+            forAll (choose (0.01, 50)) $ \dr ->
+              dBA (lydnivaa kilde v (Meter r1))
+                > dBA (lydnivaa kilde v (Meter (r1 + dr))),
+      testProperty "kumulativ >= sterkeste enkeltkilde" $
+        forAll (listOf1 (choose (20, 70))) $ \ls ->
+          dBA (kumulativ (map Desibel ls)) >= maximum ls - 1e-9,
+      testCase "retningskorreksjon: 0 dB front, 5 dB ved 90°" $ do
+        vinkelkorreksjon rettFrem @?= 0
+        assertBool
+          "≈ 5 dB ved 90°"
+          (abs (vinkelkorreksjon (vinkelKlampet 90) - 5) < 1e-9),
+      testCase "vinkelKlampet: |vinkel| klampet til [0, 90], symmetrisk" $ do
+        grader (vinkelKlampet (-30)) @?= 30
+        grader (vinkelKlampet 30) @?= 30
+        grader (vinkelKlampet (-200)) @?= 90
+        grader (vinkelKlampet 200) @?= 90
+        grader (vinkelKlampet 45) @?= 45,
+      testProperty "retningskorreksjon symmetrisk om fronten" $
+        forAll (choose (0, 90)) $ \a ->
+          vinkelkorreksjon (vinkelKlampet a) == vinkelkorreksjon (vinkelKlampet (negate a))
     ]
 
 kumulativTests :: TestTree

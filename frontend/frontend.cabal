@@ -13,9 +13,16 @@ common options
 
   if arch(wasm32)
     ghc-options:
-      -no-hs-main -optl-mexec-model=reactor "-optl-Wl,--export=hs_start"
+      -no-hs-main -optl-mexec-model=reactor
+      "-optl-Wl,--export=hs_start"
+      "-optl-Wl,--export=acoustics_dirGain"
+      "-optl-Wl,--export=acoustics_reqDist"
+      "-optl-Wl,--export=acoustics_levelAt"
+      "-optl-Wl,--export=acoustics_dbSum"
     cpp-options:
       -DWASM
+    build-depends:
+      ghc-experimental
 
 executable app
   import:           options

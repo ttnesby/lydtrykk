@@ -51,6 +51,45 @@ main = startApp defaultEvents app
 
 #ifdef WASM
 foreign export javascript "hs_start" main :: IO ()
+
+-- Delt akustikk-kjerne eksponert til JS (kart-simulatoren i lydnivakart.html).
+-- Bruker nøyaktig samme 'Lyd.Beregning' som NS 8175-siden, så de to sidene
+-- kan ikke vise ulike tall. 'src' er effektivt kildenivå ved 1 m (JS legger
+-- selv på +3 dB for veggmontering), 'vinkel' er grader fra viftens front.
+-- " sync" gjør eksportene synkrone (returnerer tallet direkte, ikke en
+-- Promise) — nødvendig fordi simulatoren kaller dem inne i tegneløkkene.
+-- Trygt her: funksjonene er rene og gjør ingen blokkerende FFI.
+foreign export javascript "acoustics_dirGain sync" js_dirGain :: Double -> Double
+foreign export javascript "acoustics_reqDist sync" js_reqDist :: Double -> Double -> Double -> Double
+foreign export javascript "acoustics_levelAt sync" js_levelAt :: Double -> Double -> Double -> Double
+foreign export javascript "acoustics_dbSum sync" js_dbSum :: JSVal -> Double
+
+foreign import javascript unsafe "$1.length" js_arrLen :: JSVal -> Int
+foreign import javascript unsafe "$1[$2]" js_arrAt :: JSVal -> Int -> Double
+
+-- | Frittstående kilde med 1 m referanse; 'src' inkluderer alt nivå (også
+-- ev. veggtillegg), så monteringen settes til 'Frittstaaende' her.
+simKilde :: Double -> Kilde
+simKilde src =
+  Kilde {oppgittNivaa = Desibel src, referanseavstand = standardR0, montering = Frittstaaende}
+
+-- | Retningsgevinst (≤ 0 dB) — negasjon av kjernens 'vinkelkorreksjon'.
+js_dirGain :: Double -> Double
+js_dirGain vinkel = negate (vinkelkorreksjon (vinkelKlampet vinkel))
+
+-- | Avstand (m) der 'grenseDb' akkurat nås, i gitt vinkel. = 'avstand'.
+js_reqDist :: Double -> Double -> Double -> Double
+js_reqDist src grenseDb vinkel =
+  meter (avstand (simKilde src) (vinkelKlampet vinkel) (Desibel grenseDb))
+
+-- | Lydnivå (dBA) i avstand 'r' og gitt vinkel. = 'lydnivaa'.
+js_levelAt :: Double -> Double -> Double -> Double
+js_levelAt src r vinkel =
+  dBA (lydnivaa (simKilde src) (vinkelKlampet vinkel) (Meter r))
+
+-- | Logaritmisk sum av nivåene i en JS-array. = 'kumulativ'.
+js_dbSum :: JSVal -> Double
+js_dbSum arr = dBA (kumulativ [Desibel (js_arrAt arr i) | i <- [0 .. js_arrLen arr - 1]])
 #endif
 
 app :: App Model Action
@@ -138,6 +177,7 @@ viewModel _ m =
   H.div_
     [P.class_ "app"]
     [ H.h1_ [] [text "Varmepumpe: lydnivå og avstand (NS 8175)"],
+      H.p_ [] [H.a_ [P.href_ "lydnivakart.html"] [text "Simulator: lydnivåsoner på kart"]],
       inndataPanel m,
       case kilde m of
         Nothing ->

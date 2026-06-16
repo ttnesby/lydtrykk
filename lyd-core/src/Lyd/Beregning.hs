@@ -12,6 +12,7 @@ module Lyd.Beregning
     Meter (..),
     Vinkel,
     nyVinkel,
+    vinkelKlampet,
     rettFrem,
     grader,
     Montering (..),
@@ -74,6 +75,14 @@ nyVinkel :: Double -> Maybe Vinkel
 nyVinkel g
   | g >= 0 && g <= 90 = Just (Vinkel g)
   | otherwise = Nothing
+
+-- | Bring en vilkårlig vinkel (grader) inn i modellens domene [0, 90].
+-- Retningskorreksjonen er symmetrisk om hovedretningen, så fortegnet er
+-- uvesentlig: en nabo 30° til venstre dempes som 30° til høyre — derfor
+-- 'abs'. Vinkler bak utedelen (> 90°) behandles som siden (90°), i tråd med
+-- antakelsen om at bakveggen står mot egen bolig. Brukes av kart-simulatoren.
+vinkelKlampet :: Double -> Vinkel
+vinkelKlampet = Vinkel . min 90 . abs
 
 -- | 0°: rett frem i viftens hovedretning.
 rettFrem :: Vinkel
