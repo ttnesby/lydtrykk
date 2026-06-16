@@ -27,16 +27,24 @@ NS 8175 (LAFmax på uteoppholdsareal):
 
 ## Simulator (lydnivåsoner på kart)
 
-`lydnivakart.html` er en Leaflet-basert simulator (lenket fra hovedsiden):
+`lydnivakart.html` er en Leaflet-basert simulator. Den er **ikke lenket** fra
+hovedsiden — siden er upublisert og nås bare via direkte URL
+(`…/lydnivakart.html`):
 
 - Klikk i kartet for å plassere **utedeler** og **naboer**. Utedeler kan dras
   og roteres (hvitt håndtak), og bakgrunnskart byttes (Kartverket gråtone som
   standard, topo, flyfoto, OSM).
 - Hver utedel tegner **halvbuer foran pumpa** der hvert lydnivå-krav nås
   (klasse B/C, dag/kveld/natt). Buen er bare foran — bakveggen antas å stå mot
-  egen bolig.
+  egen bolig. Ved oppstart er klasse C dag, kveld og natt avkrysset som standard.
 - Hvert nabopunkt viser **samlet** (logaritmisk summert) lydnivå fra alle
   utedeler, fargelagt over/under valgt grense.
+- **Lagre / last oppsett**: «Lagre til fil» laster ned hele tilstanden som en
+  menneskelesbar JSON-fil i nedlastingsmappa — valgte soner, driftsmodus,
+  montering, standardretning, karttype, alle utedeler (plassering + vinkel),
+  naboer og kartutsnitt. «Last fra fil» setter alt tilbake til lagret tilstand.
+  (Nettleseren lagrer til nedlastingsmappa; lasting krever at du velger fila i
+  filvelgeren — en nettside kan ikke lese mapper på egen hånd.)
 
 Simulatoren deler **samme akustikk-kjerne** (`Lyd.Beregning`) som NS 8175-siden,
 eksponert fra `app.wasm` via synkrone JSFFI-eksporter (`acoustics_dirGain`,

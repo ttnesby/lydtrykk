@@ -175,7 +175,6 @@ viewModel _ m =
   H.div_
     [P.class_ "app"]
     [ H.h1_ [] [text "Varmepumpe: lydnivå og avstand (NS 8175)"],
-      H.p_ [] [H.a_ [P.href_ "lydnivakart.html"] [text "Simulator: lydnivåsoner på kart"]],
       inndataPanel m,
       case kilde m of
         Nothing ->
