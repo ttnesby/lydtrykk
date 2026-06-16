@@ -22,6 +22,27 @@ NS 8175 (LAFmax på uteoppholdsareal):
   nattavslag (pumpen av kl. 23–07 ⇒ kveldsgrensen dimensjonerer).
 - **Modus B**: beregnet lydnivå ved gitt avstand, med innenfor/utenfor-status
   per tidsrom.
+- **Modus C**: avstandstabell for et fast vinkelsett, klasse C og B side om
+  side, én undertabell per tidsrom.
+
+## Simulator (lydnivåsoner på kart)
+
+`lydnivakart.html` er en Leaflet-basert simulator (lenket fra hovedsiden):
+
+- Klikk i kartet for å plassere **utedeler** og **naboer**. Utedeler kan dras
+  og roteres (hvitt håndtak), og bakgrunnskart byttes (Kartverket gråtone som
+  standard, topo, flyfoto, OSM).
+- Hver utedel tegner **halvbuer foran pumpa** der hvert lydnivå-krav nås
+  (klasse B/C, dag/kveld/natt). Buen er bare foran — bakveggen antas å stå mot
+  egen bolig.
+- Hvert nabopunkt viser **samlet** (logaritmisk summert) lydnivå fra alle
+  utedeler, fargelagt over/under valgt grense.
+
+Simulatoren deler **samme akustikk-kjerne** (`Lyd.Beregning`) som NS 8175-siden,
+eksponert fra `app.wasm` via synkrone JSFFI-eksporter (`acoustics_dirGain`,
+`acoustics_reqDist`, `acoustics_levelAt`, `acoustics_dbSum`). Tallene kan derfor
+ikke divergere mellom de to sidene. En ren JS-fallback med identisk modell brukes
+dersom WASM ikke lastes.
 
 ## Formler
 
@@ -41,11 +62,17 @@ flere kilder: `ltot = 10·log10(Σ 10^(l/10))`.
 > Forenklet modell — faktiske forhold med refleksjoner og skjerming kan
 > avvike. Se [PLAN.md](PLAN.md) for full spesifikasjon.
 
+> **Planlagt:** retningskorreksjonen vurderes byttet fra lineær rampe til en
+> glatt cosinus-modell før publisering. Fasit-tallene som må skaffes for det
+> byttet er spesifisert i [COSINUS-OVERGANG.md](COSINUS-OVERGANG.md).
+
 ## Prosjektstruktur
 
 - `lyd-core/` — ren domenelogikk, uten Miso-avhengighet. Testes med nativ GHC
   (tasty + QuickCheck, inkl. gylne verdier og rundtur-egenskap).
-- `frontend/` — Miso-app, bygges kun for wasm32-wasi.
+- `frontend/` — Miso-app, bygges kun for wasm32-wasi. Inkluderer
+  `static/lydnivakart.html` (kart-simulatoren) og JSFFI-eksportene av
+  akustikk-kjernen til JS.
 - `build.sh` — wasm-bygg → `dist/` (post-link av JSFFI-glue, wasm-opt -Oz).
 - `.github/workflows/deploy.yml` — test (nativ GHC) → wasm-bygg → GitHub Pages.
 
