@@ -1,8 +1,8 @@
 # Overgang til cosinus-retningskorreksjon
 
-> Status: **ikke besluttet**. Lineær rampe beholdes under testing; cosinus
-> vurderes før publisering. Dette dokumentet er sjekklisten for byttet, og
-> spesifiserer nøyaktig hvilke fasit-tall som må skaffes først.
+> Status: **fasit mottatt og verifisert** (se nederst). Modellen er ikke
+> byttet ennå — lineær rampe beholdes under testing, cosinus aktiveres før
+> publisering. Dette dokumentet er sjekklisten for byttet.
 
 ## Bakgrunn
 
@@ -82,3 +82,57 @@ klasser).
 4. Juster simulatortekstene i `lydnivakart.html` («Les dette ærlig»).
 5. Bygg (`./build.sh`) og verifiser i nettleser: lobe-symmetri, tall identiske
    mellom WASM og JS-fallback, og at NS-tabellene matcher din fasit.
+
+## Mottatt fasit (verifisert mot `D(v) = 5·(1 − cos v)`)
+
+Tallene fra Mathematica, kontrollert programmatisk — alle stemmer.
+
+### Direktivitet
+
+| v (°) | D(v) (dB) | L = 53 − D(v) |
+|-------|-----------|---------------|
+| 0     | 0.0000    | 53.0000       |
+| 15    | 0.1704    | 52.8296       |
+| 30    | 0.6699    | 52.3301       |
+| 45    | 1.4645    | 51.5355       |
+| 50    | 1.7861    | 51.2139       |
+| 60    | 2.5000    | 50.5000       |
+| 70    | 3.2899    | 49.7101       |
+| 80    | 4.1318    | 48.8682       |
+| 90    | 5.0000    | 48.0000       |
+
+### Avstand `r` (r₀ = 1 m, 2 desimaler)
+
+| lp0 | lp | v  | r     |
+|-----|----|----|-------|
+| 54  | 35 | 0  | 8.91  |
+| 54  | 35 | 45 | 7.53  |
+| 54  | 35 | 60 | 6.68  |
+| 54  | 35 | 90 | 5.01  |
+| 54  | 30 | 90 | 8.91  |
+| 53  | 35 | 0  | 7.94  |
+| 53  | 35 | 90 | 4.47  |
+| 53  | 30 | 0  | 14.13 |
+| 48  | 35 | 0  | 4.47  |
+| 48  | 30 | 0  | 7.94  |
+| 45  | 35 | 0  | 3.16  |
+| 50  | 30 | 0  | 10.00 |
+
+### Avstandstabell (lp0 = 44, r₀ = 1, frittstående, 2 desimaler)
+
+| Klasse | Tidsrom | Grense | v=0  | v=50 | v=60 | v=70 | v=80 | v=90 |
+|--------|---------|--------|------|------|------|------|------|------|
+| C      | Dag     | 45     | 0.89 | 0.73 | 0.67 | 0.61 | 0.55 | 0.50 |
+| C      | Kveld   | 40     | 1.58 | 1.29 | 1.19 | 1.09 | 0.98 | 0.89 |
+| C      | Natt    | 35     | 2.82 | 2.29 | 2.11 | 1.93 | 1.75 | 1.58 |
+| B      | Dag     | 40     | 1.58 | 1.29 | 1.19 | 1.09 | 0.98 | 0.89 |
+| B      | Kveld   | 35     | 2.82 | 2.29 | 2.11 | 1.93 | 1.75 | 1.58 |
+| B      | Natt    | 30     | 5.01 | 4.08 | 3.76 | 3.43 | 3.11 | 2.82 |
+
+### Lydnivå kryss-sjekk
+
+| lp0 | r  | v  | L     |
+|-----|----|----|-------|
+| 53  | 5  | 0  | 39.02 |
+| 53  | 5  | 90 | 34.02 |
+| 53  | 10 | 45 | 31.54 |
