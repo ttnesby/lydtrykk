@@ -147,15 +147,13 @@ visDb d = desimal (dBA d) <> " dBA"
 visMeter :: Meter -> MisoString
 visMeter r = desimal (meter r) <> " m"
 
--- | Slideren starter på 45° — vinkler under gir uansett ingen korreksjon,
--- så venstre endepunkt betyr «45° eller mindre».
+-- | Slideren starter midt i området (45°). Med cosinus-modellen gir alle
+-- vinkler 0–90° korreksjon, så hele spennet er meningsfullt.
 startVinkel :: Vinkel
 startVinkel = fromMaybe rettFrem (nyVinkel 45)
 
 visVinkel :: Vinkel -> MisoString
-visVinkel v
-  | grader v <= 45 = "≤ 45°"
-  | otherwise = ms (show (round (grader v) :: Int)) <> "°"
+visVinkel v = ms (show (round (grader v) :: Int)) <> "°"
 
 tidsromNavn :: Tidsrom -> MisoString
 tidsromNavn Dag = "Dag (07–19)"
@@ -250,7 +248,7 @@ inndataPanel m =
           H.input_
             [ P.id_ "vinkel",
               P.type_ "range",
-              P.min_ "45",
+              P.min_ "0",
               P.max_ "90",
               P.step_ "1",
               P.value_ (ms (show (round (grader (m ^. vinkelValg)) :: Int))),
@@ -258,7 +256,7 @@ inndataPanel m =
             ],
           H.span_
             [P.class_ "hint"]
-            [text "0–45° gir ingen retningskorreksjon; over 45° øker dempingen lineært til 5 dBA ved 90°."]
+            [text "Retningskorreksjon følger en cosinus-karakteristikk: 0 dBA rett frem, økende til 5 dBA demping ved 90°."]
         ],
       H.div_
         [P.class_ "felt"]

@@ -52,7 +52,7 @@ hovedretning:
 
 ```
 lp(r, v) = lp0 − 20·log10(r / r0) − korr(v)
-korr(v)  = (v − 45)·5/45  for 45° < v ≤ 90°, ellers 0
+korr(v)  = 5·(1 − cos v)   for 0° ≤ v ≤ 90°   (cosinus-karakteristikk)
 r(lp, v) = r0 · 10^((lp0 − lp − korr(v)) / 20)
 ```
 
@@ -62,9 +62,9 @@ flere kilder: `ltot = 10·log10(Σ 10^(l/10))`.
 > Forenklet modell — faktiske forhold med refleksjoner og skjerming kan
 > avvike. Se [PLAN.md](PLAN.md) for full spesifikasjon.
 
-> **Planlagt:** retningskorreksjonen vurderes byttet fra lineær rampe til en
-> glatt cosinus-modell før publisering. Fasit-tallene som må skaffes for det
-> byttet er spesifisert i [COSINUS-OVERGANG.md](COSINUS-OVERGANG.md).
+> Retningskorreksjonen bruker en glatt cosinus-karakteristikk (0 dB rett frem,
+> 5 dBA ved 90°). Fasit-tallene den er verifisert mot er dokumentert i
+> [COSINUS-OVERGANG.md](COSINUS-OVERGANG.md).
 
 ## Prosjektstruktur
 

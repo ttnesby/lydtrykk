@@ -121,12 +121,11 @@ effektivtKildenivaa kilde = case montering kilde of
   Frittstaaende -> oppgittNivaa kilde
   Veggmontert -> Desibel (dBA (oppgittNivaa kilde) + veggtillegg)
 
--- | Retningskorreksjon i dBA: 0 opp til 45°, deretter lineært økende til
--- 5 dBA ved 90°. ('Vinkel'-invarianten garanterer at vi aldri er over 90°.)
+-- | Retningskorreksjon i dBA: glatt cosinus-karakteristikk, 0 dB rett frem
+-- og 5 dBA demping ved 90°. ('Vinkel'-invarianten garanterer 0–90°, der
+-- @cos@ er ikke-negativ, så korreksjonen ligger i [0, 5].)
 vinkelkorreksjon :: Vinkel -> Double
-vinkelkorreksjon (Vinkel v)
-  | v > 45 = (v - 45) * 5 / 45
-  | otherwise = 0
+vinkelkorreksjon (Vinkel v) = 5 * (1 - cos (v * pi / 180))
 
 -- | Lydnivået fra kilden i gitt vinkel og avstand.
 lydnivaa :: Kilde -> Vinkel -> Meter -> Desibel

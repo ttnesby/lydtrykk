@@ -12,7 +12,7 @@ tests :: TestTree
 tests =
   testGroup
     "lyd-core"
-    [grenseTests, vinkelTests, kildeTests, gylneVerdier, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper]
+    [grenseTests, vinkelTests, kildeTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper]
 
 grenseTests :: TestTree
 grenseTests =
@@ -75,6 +75,8 @@ gylneVerdier =
               @?= forventet
       | (lp0, lp, v, forventet) <-
           [ (54, 35, 0, 8.91),
+            (54, 35, 45, 7.53),
+            (54, 35, 60, 6.68),
             (54, 35, 90, 5.01),
             (54, 30, 90, 8.91),
             (53, 35, 0, 7.94),
@@ -84,6 +86,23 @@ gylneVerdier =
             (48, 30, 0, 7.94),
             (45, 35, 0, 3.16),
             (50, 30, 0, 10.00)
+          ]
+    ]
+
+-- | Lydnivå-kryss-sjekk mot notatbokens cosinus-fasit: L(lp0, r, v),
+-- frittstående, r0 = 1, 2 desimaler.
+lydnivaaKrysssjekk :: TestTree
+lydnivaaKrysssjekk =
+  testGroup "lydnivå kryss-sjekk (cosinus, 2 desimaler)" $
+    [ testCase (show lp0 ++ " dBA @ " ++ show r ++ " m, " ++ show v ++ "°") $
+        case nyVinkel v of
+          Nothing -> assertFailure "ugyldig vinkel i testtabellen"
+          Just vk ->
+            rund2 (dBA (lydnivaa (frittstaaende lp0) vk (Meter r))) @?= forventet
+      | (lp0, r, v, forventet) <-
+          [ (53, 5, 0, 39.02),
+            (53, 5, 90, 34.02),
+            (53, 10, 45, 31.54)
           ]
     ]
 
@@ -113,15 +132,26 @@ tabellTests =
           | (klasse, t, v, forventet) <-
               [ -- Klasse C: Dag 45, Kveld 40, Natt 35
                 (KlasseC, Dag, 0, 0.89),
+                (KlasseC, Dag, 60, 0.67),
                 (KlasseC, Dag, 90, 0.50),
                 (KlasseC, Kveld, 0, 1.58),
+                -- Klasse C Natt: hele raden (mellomvinkler pinner cosinus-formen)
                 (KlasseC, Natt, 0, 2.82),
+                (KlasseC, Natt, 50, 2.29),
+                (KlasseC, Natt, 60, 2.11),
+                (KlasseC, Natt, 70, 1.93),
+                (KlasseC, Natt, 80, 1.75),
                 (KlasseC, Natt, 90, 1.58),
                 -- Klasse B: Dag 40, Kveld 35, Natt 30
                 (KlasseB, Dag, 0, 1.58),
                 (KlasseB, Kveld, 0, 2.82),
                 (KlasseB, Kveld, 90, 1.58),
+                -- Klasse B Natt: hele raden
                 (KlasseB, Natt, 0, 5.01),
+                (KlasseB, Natt, 50, 4.08),
+                (KlasseB, Natt, 60, 3.76),
+                (KlasseB, Natt, 70, 3.43),
+                (KlasseB, Natt, 80, 3.11),
                 (KlasseB, Natt, 90, 2.82)
               ]
         ]
@@ -151,10 +181,10 @@ egenskaper =
         forAll gyldigInput $ \(kilde, Desibel lp, v) ->
           forAll (choose (0.01, 5)) $ \delta ->
             avstand kilde v (Desibel lp) > avstand kilde v (Desibel (lp + delta)),
-      testProperty "monotoni: avstand strengt synkende i vinkel for v > 45" $
+      testProperty "monotoni: avstand strengt synkende i vinkel (0–90°)" $
         forAll gyldigInput $ \(kilde, lp, _) ->
-          forAll (choose (45.01, 89) `suchThatMap` nyVinkel) $ \v1 ->
-            forAll (choose (grader v1 + 0.01, 90) `suchThatMap` nyVinkel) $ \v2 ->
+          forAll (choose (1, 88) `suchThatMap` nyVinkel) $ \v1 ->
+            forAll (choose (grader v1 + 1, 90) `suchThatMap` nyVinkel) $ \v2 ->
               avstand kilde v1 lp > avstand kilde v2 lp
     ]
 

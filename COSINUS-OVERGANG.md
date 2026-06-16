@@ -1,8 +1,8 @@
 # Overgang til cosinus-retningskorreksjon
 
-> Status: **fasit mottatt og verifisert** (se nederst). Modellen er ikke
-> byttet ennå — lineær rampe beholdes under testing, cosinus aktiveres før
-> publisering. Dette dokumentet er sjekklisten for byttet.
+> Status: **gjennomført** ✓ — modellen bruker nå cosinus
+> (`D(v) = 5·(1 − cos v)`), verifisert mot fasiten nederst. Dette dokumentet
+> beholdes som referanse for fasit-tallene og hva byttet omfattet.
 
 ## Bakgrunn
 

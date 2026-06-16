@@ -124,7 +124,7 @@
       <label class="l">Les dette ærlig</label>
       <p class="note">• Et <b>nabopunkt</b> viser den logaritmiske summen av alle utedelene – to pumper på 35 dBA hver gir ~38 dBA samlet.<br>
       • Selv <b>under</b> grenseverdiene blir inntil ~20 % sjenert av lydnivået.<br>
-      • Retningskorreksjonen er 0 dB inntil 45° og øker lineært til −5 dB ved 90° (samme modell som NS 8175-siden). Buen er da ca. 56 % så lang til siden som rett foran. Å vri pumpa så naboen havner på <i>siden</i> er ofte det som avgjør.<br>
+      • Retningskorreksjonen følger en cosinus-karakteristikk: 0 dB rett frem, økende til −5 dB ved 90° (samme modell som NS 8175-siden). Buen er da ca. 56 % så lang til siden som rett foran. Å vri pumpa så naboen havner på <i>siden</i> er ofte det som avgjør.<br>
       • Avstandene er i ekte meter. Bruk målestokken nede i kartet som kontroll.<br>
       • Modellen er en punktkilde i fritt felt; refleksjoner og bakgrunnslyd i tett bebyggelse kan gjøre virkeligheten verre, ikke bedre.</p>
     </div>
@@ -159,8 +159,8 @@ const bandsOn={nattB:false,nattC:true,kvC:false,dagC:false};
 
 // ---- akustikk-kjerne ----
 // Sannhetskilden er Lyd.Beregning (WASM), delt med NS 8175-siden. JS-funksjonene
-// nedenfor er rene fallbacks med NØYAKTIG samme modell (lineær rampe 0→45°,
-// deretter til −5 dB ved 90°), så tallene er like også om WASM ikke lastes.
+// nedenfor er rene fallbacks med NØYAKTIG samme modell (cosinus-karakteristikk:
+// 0 dB rett frem, −5 dB ved 90°), så tallene er like også om WASM ikke lastes.
 let WASM=null;
 window.__setAcoustics=(exports)=>{ WASM=exports; window.__acoustics=exports; redrawAll(); };
 
@@ -169,7 +169,7 @@ function srcLevel(){
   const mount=parseFloat(document.querySelector('#mount .on').dataset.v);
   return spl+mount;
 }
-function dirGainJS(angleDeg){ const a=Math.min(Math.abs(angleDeg),90); return a>45 ? -(a-45)*5/45 : 0; }
+function dirGainJS(angleDeg){ const a=Math.min(Math.abs(angleDeg),90); return -5*(1-Math.cos(a*Math.PI/180)); }
 function dirGain(angleDeg){ return WASM ? WASM.acoustics_dirGain(angleDeg) : dirGainJS(angleDeg); }
 function reqDist(angleDeg,limit){
   return WASM ? WASM.acoustics_reqDist(srcLevel(),limit,angleDeg)
