@@ -52,6 +52,27 @@ eksponert fra `app.wasm` via synkrone JSFFI-eksporter (`acoustics_dirGain`,
 ikke divergere mellom de to sidene. En ren JS-fallback med identisk modell brukes
 dersom WASM ikke lastes.
 
+### Oppdatere standard-oppsettet
+
+Ved hver (hard) refresh laster simulatoren et default-oppsett, slik at den
+åpner med et ferdig sett utedeler, soner og kartutsnitt. Kilden er
+[`frontend/static/default.json`](frontend/static/default.json) — samme
+filformat som «Lagre til fil» produserer.
+
+Fila hentes **live fra GitHub raw**, så standardverdiene kan oppdateres **uten
+ny deploy**:
+
+1. Lag ønsket oppsett i simulatoren og bruk **«Lagre til fil»**.
+2. Lim innholdet inn i `frontend/static/default.json` på `main` (f.eks. via
+   blyant-ikonet i GitHub sitt webgrensesnitt) og commit.
+3. Brukerne ser endringen ved neste hard refresh (innen ~5 min, pga.
+   CDN-cache på raw). `paths-ignore` i workflowen hindrer at en ren
+   default-endring trigger et unødvendig wasm-bygg.
+
+Hvis raw ikke kan hentes (nett/CORS/offline) faller siden tilbake på den
+bundlede kopien fra forrige deploy, så defaults lastes alltid. For å oppdatere
+den bundlede fallback-kopien, kjør deploy-workflowen manuelt («Run workflow»).
+
 ## Formler
 
 Forenklet frittfeltmodell (punktkilde, invers kvadratlov), med referansenivå
@@ -119,3 +140,17 @@ Push til `main` kjører testene, bygger wasm og deployer `dist/` til GitHub
 Pages via `actions/deploy-pages`. Workflowen forsøker selv å aktivere Pages
 (`actions/configure-pages` med `enablement: true`); hvis det feiler, slå på
 GitHub Pages med «GitHub Actions» som source under Settings → Pages.
+
+### Hoppe over deploy for trivielle endringer
+
+For commits som ikke påvirker det som bygges (f.eks. ren dokumentasjon), kan du
+hoppe over hele workflow-kjøringen ved å ta med en av disse i commit-meldingen
+(tittel **eller** melding-body):
+
+```
+[skip ci]   [ci skip]   [no ci]   [skip actions]   [actions skip]
+```
+
+Dette gjelder kun `push`/`pull_request` — manuell kjøring via «Run workflow»
+påvirkes ikke. Standard-oppsettet (`default.json`) hoppes over automatisk via
+`paths-ignore` og trenger derfor ingen slik markør.
