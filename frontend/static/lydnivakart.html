@@ -440,6 +440,22 @@ document.getElementById('loadfile').addEventListener('change',e=>{
 });
 
 updateReadout();   // første visning (JS-fallback); WASM-init kaller redrawAll() når klar
+
+// ---- default-oppsett (hybrid: live fra GitHub raw, faller tilbake på bundlet kopi) ----
+// Rediger frontend/static/default.json på main for å endre standardverdiene for alle.
+// Live-versjonen (raw) slår igjennom ved refresh UTEN ny deploy (~5 min CDN-cache).
+// Bundlet kopi i dist/ brukes kun hvis raw ikke kan hentes (nett/CORS/offline).
+const DEFAULT_RAW='https://raw.githubusercontent.com/ttnesby/lydtrykk/main/frontend/static/default.json';
+async function loadDefaults(){
+  const get=url=>fetch(url,{cache:'no-store'}).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); });
+  let d=null;
+  try{ d=await get(DEFAULT_RAW+'?t='+Date.now()); }                       // live-versjon
+  catch(e){ console.warn('Live default utilgjengelig, prøver bundlet kopi:',e);
+    try{ d=await get('default.json'); }                                   // bundlet fallback
+    catch(e2){ console.warn('Ingen default.json funnet – starter tomt:',e2); return; } }
+  try{ restore(d); }catch(e){ console.warn('Kunne ikke bruke default-oppsett:',e); }
+}
+loadDefaults();    // legger inn standard pumper/soner/utsnitt ved hver (hard) refresh
 </script>
 
 <!-- Akustikk-kjernen: samme app.wasm som NS 8175-siden. Init kjører reactor-modus

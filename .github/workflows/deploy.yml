@@ -3,6 +3,11 @@ name: test-build-deploy
 on:
   push:
     branches: [main]
+    # Endring av kun default-oppsettet trenger ingen ny deploy – appen henter
+    # frontend/static/default.json live fra GitHub raw ved refresh. Manuell
+    # deploy (for å oppdatere den bundlede fallback-kopien) via "Run workflow".
+    paths-ignore:
+      - 'frontend/static/default.json'
   workflow_dispatch:
 
 permissions:
