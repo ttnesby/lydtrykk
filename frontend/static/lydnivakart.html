@@ -71,6 +71,7 @@
     <div class="grp">
       <label class="l">Vis soner (halvbuer foran pumpa)</label>
       <div class="checks" id="bands">
+        <label class="ck"><input type="checkbox" data-k="natBp" checked><span class="sw" style="height:4px;background:repeating-linear-gradient(90deg,#1d4ed8 0 6px,transparent 6px 11px)"></span>Klasse B+ natt / Stillhet</label>
         <label class="ck"><input type="checkbox" data-k="nattB"><span class="sw" style="background:#d23b34"></span>Klasse B natt</label>
         <label class="ck"><input type="checkbox" data-k="nattC" checked><span class="sw" style="background:#d8602f"></span>Klasse C natt / B kveld</label>
         <label class="ck"><input type="checkbox" data-k="kvC" checked><span class="sw" style="background:#e3a52b"></span>Klasse C kveld / B dag</label>
@@ -174,12 +175,13 @@ L.circleMarker(MARKER,{radius:4,color:'#1d6fb8',weight:2,fillColor:'#1d6fb8',fil
 
 // ---- soner / krav ----
 const BANDS=[
+  {key:'natBp', limit:28, color:'#1d4ed8', label:'Klasse B+ natt / Stillhet', dash:true, weight:3}, // 35 − 7: grense der folk flest ikke forstyrres
   {key:'nattB', limit:30, color:'#d23b34', label:'Klasse B natt'},
   {key:'nattC', limit:35, color:'#d8602f', label:'Klasse C natt / B kveld'},
   {key:'kvC',   limit:40, color:'#e3a52b', label:'Klasse C kveld / B dag'},
   {key:'dagC',  limit:45, color:'#6f9f25', label:'Klasse C dag'},
 ];
-const bandsOn={nattB:false,nattC:true,kvC:true,dagC:true};
+const bandsOn={natBp:true,nattB:false,nattC:true,kvC:true,dagC:true};
 
 // ---- akustikk-kjerne ----
 // Sannhetskilden er Lyd.Beregning (WASM), delt med NS 8175-siden. JS-funksjonene
@@ -266,7 +268,7 @@ function addPump(latlng,brg,num){
   if(brg==null) brg=parseInt(document.getElementById('defdir').value,10);
   if(num==null) num=++pumpNo;
   const m=L.marker(latlng,{icon:arrowIcon(brg,num),draggable:true}).addTo(map);
-  const zones={}; BANDS.forEach(b=>{ zones[b.key]=L.polygon([],{color:b.color,weight:1.5,fillColor:b.color,fillOpacity:.08}); });
+  const zones={}; BANDS.forEach(b=>{ zones[b.key]=L.polygon([],{color:b.color,weight:b.weight||1.5,dashArray:b.dash?'8 6':null,fillColor:b.color,fillOpacity:b.dash?0:.08}); });
   const p={id:num,num:num,marker:m,zones:zones,latlng:latlng,brg:brg,row:null};
   m.on('click',e=>{L.DomEvent.stop(e);select(p.id);});
   m.on('drag',e=>{ p.latlng=e.target.getLatLng(); scheduleDraw(p); if(sel===p.id) positionHandle(); scheduleNabos(); });
@@ -402,7 +404,7 @@ function restore(d){
   const s=d.settings||{};
   // soner
   if(s.bands) BANDS.forEach(b=>{
-    const v=!!s.bands[b.key]; bandsOn[b.key]=v;
+    const v=(b.key in s.bands)?!!s.bands[b.key]:bandsOn[b.key]; bandsOn[b.key]=v;  // mangler nøkkelen → behold kode-default (gjelder gamle filer uten nye soner)
     const cb=document.querySelector(`#bands input[data-k="${b.key}"]`); if(cb) cb.checked=v;
   });
   // driftsmodus

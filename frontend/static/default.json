@@ -4,6 +4,7 @@
   "savedAt": "2026-06-17T03:20:21.459Z",
   "settings": {
     "bands": {
+      "natBp": true,
       "nattB": false,
       "nattC": true,
       "kvC": true,
