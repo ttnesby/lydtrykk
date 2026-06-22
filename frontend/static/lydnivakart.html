@@ -11,7 +11,7 @@
   html,body{ margin:0; height:100%; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
   #wrap{ display:flex; height:100%; }
   #side{ width:360px; min-width:360px; height:100%; overflow-y:auto; border-right:1px solid var(--line); background:var(--panel); padding:18px 18px 40px; }
-  #map{ flex:1; height:100%; }
+  #map{ flex:1; height:100%; position:relative; }
   h1{ font-size:18px; font-weight:600; margin:0 0 4px; }
   .sub{ font-size:12.5px; color:var(--muted); line-height:1.5; margin:0 0 16px; }
   .grp{ border-top:1px solid var(--line); padding:14px 0; }
@@ -51,6 +51,33 @@
   .leaflet-tooltip.nbtt{ background:transparent;border:0;box-shadow:none;padding:0;font-weight:600; }
   .nbpill{ display:inline-block;font-size:11px;padding:2px 7px;border-radius:9px;border:1px solid #fff;color:#fff;white-space:nowrap;font-variant-numeric:tabular-nums; }
   .leaflet-container{ background:#e8e6df; }
+  #toggle-sidebar{ display:none; position:fixed; bottom:12px; left:12px; z-index:1000; width:40px; height:40px; padding:0; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; font-size:20px; color:var(--ink); line-height:1; box-shadow:0 2px 6px rgba(0,0,0,0.15); }
+  #toggle-sidebar:hover{ background:#f3f1ea; }
+  /* Mobile layout */
+  @media (max-width:768px){
+    #wrap{ flex-direction:column; }
+    #side{ 
+      position:fixed; 
+      top:0; 
+      left:-100%; 
+      width:100%; 
+      max-width:360px; 
+      height:100%; 
+      z-index:999; 
+      transition:left 0.3s ease-out; 
+      border-right:1px solid var(--line); 
+      box-shadow:-2px 0 8px rgba(0,0,0,0.15);
+    }
+    #side.open{ left:0; }
+    #toggle-sidebar{ display:block; }
+    #map{ width:100%; height:100%; }
+  }
+  @media (max-width:480px){
+    #side{ max-width:100%; left:-100%; }
+    h1{ font-size:16px; }
+    .sub{ font-size:11px; }
+    select, input[type=range], .btn{ font-size:13px; }
+  }
 </style>
 </head>
 <body>
@@ -141,11 +168,29 @@
       • Modellen er en punktkilde i fritt felt; refleksjoner og bakgrunnslyd i tett bebyggelse kan gjøre virkeligheten verre, ikke bedre.</p>
     </div>
   </div>
-  <div id="map"></div>
+  <div id="map">
+    <button id="toggle-sidebar" aria-label="Toggle sidebar">☰</button>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
+// Mobile sidebar toggle
+const toggleBtn=document.getElementById('toggle-sidebar');
+const sideBar=document.getElementById('side');
+const wrap=document.getElementById('wrap');
+
+toggleBtn.addEventListener('click',()=>{ sideBar.classList.toggle('open'); });
+
+// Close sidebar when clicking outside of it on mobile
+document.addEventListener('click',(e)=>{
+  if(window.innerWidth<=768 && sideBar.classList.contains('open')){
+    if(!sideBar.contains(e.target) && !toggleBtn.contains(e.target)){
+      sideBar.classList.remove('open');
+    }
+  }
+});
+
 const CENTER=[59.6502276,10.8092635], MARKER=[59.6499609,10.809443];
 
 const map=L.map('map',{center:CENTER,zoom:19,maxZoom:22,zoomControl:true,preferCanvas:true});
