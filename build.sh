@@ -24,7 +24,8 @@ WASM=$(wasm32-wasi-cabal "${PROJECT[@]}" list-bin app | tail -n 1)
 
 rm -rf dist
 mkdir -p dist
-cp frontend/static/* dist/
+# '/.' kopierer også skjulte filer (f.eks. .nojekyll), som '*' hopper over.
+cp -R frontend/static/. dist/
 "$(wasm32-wasi-ghc --print-libdir)"/post-link.mjs --input "$WASM" --output dist/ghc_wasm_jsffi.js
 cp "$WASM" dist/app.wasm
 
