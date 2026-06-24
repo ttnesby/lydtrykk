@@ -1,6 +1,16 @@
 :root {
-  color-scheme: light;
+  color-scheme: dark;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --bg: #0e1116;
+  --panel: #1a1f27;
+  --panel-2: #11151b;
+  --kant: #2a2f38;
+  --tekst: #e6e8eb;
+  --tekst-svak: #9aa3af;
+  --aksent: #6ab0ff;
+  --ok: #3fb950;
+  --feil: #f85149;
 }
 
 * {
@@ -11,12 +21,12 @@ body {
   margin: 0;
   padding: 0;
   line-height: 1.5;
-  color: #1c1c1e;
-  background: #f2f2f6;
+  color: var(--tekst);
+  background: var(--bg);
 }
 
 .app {
-  max-width: 40rem;
+  max-width: 46rem;
   margin: 0 auto;
   padding: 1rem;
 }
@@ -24,167 +34,406 @@ body {
 h1 {
   font-size: 1.35rem;
   line-height: 1.3;
-  margin: 0.5rem 0 1rem;
+  margin: 0.5rem 0 0.75rem;
 }
 
 h2 {
   font-size: 1.05rem;
-  margin: 0 0 0.75rem;
+  margin: 0;
+}
+
+a {
+  color: var(--aksent);
 }
 
 .panel {
-  background: #fff;
+  background: var(--panel);
+  border: 1px solid var(--kant);
   border-radius: 12px;
   padding: 1rem;
   margin-bottom: 1rem;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
+}
+
+/* Inndata-rad ------------------------------------------------------------ */
+
+.inndata {
+  display: grid;
+  grid-template-columns: 1.7fr 1fr;
+  gap: 1rem;
+}
+
+.seksjon {
+  border: 1px solid var(--kant);
+  border-radius: 10px;
+  padding: 0.8rem;
+}
+
+.seksjon-tittel {
+  margin: 0 0 0.7rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--tekst-svak);
+}
+
+.felter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem 1rem;
 }
 
 .felt {
-  margin-bottom: 0.9rem;
-}
-
-.felt:last-child {
-  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
 }
 
 .felt > label,
 .felt > span {
-  display: block;
   font-weight: 600;
-  font-size: 0.9rem;
-  margin-bottom: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--tekst-svak);
 }
 
-.felt label.sjekk,
-.felt label.radio {
-  display: inline-flex;
+.felt label.sjekk {
+  flex-direction: row;
   align-items: center;
-  gap: 0.3rem;
+  gap: 0.4rem;
   font-weight: 400;
+  font-size: 0.95rem;
+  color: var(--tekst);
+}
+
+.vinkelfelt {
+  flex: 1 1 11rem;
+  min-width: 9rem;
+}
+
+.effektivt {
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--kant);
+}
+
+.effektivt .hint {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--tekst);
+}
+
+/* Linje på tvers av begge seksjoner: kildenivå inkl. vinkel. */
+.samlet {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.7rem 0.8rem;
+  background: var(--panel-2);
+  border: 1px solid var(--kant);
+  border-radius: 10px;
+}
+
+.samlet strong {
   font-size: 1rem;
-  margin-right: 1rem;
+}
+
+.samlet .hint {
+  font-size: 0.82rem;
 }
 
 input[type="number"] {
-  width: 100%;
-  max-width: 10rem;
-  font-size: 1.1rem;
+  width: 5.5rem;
+  font-size: 1.05rem;
   padding: 0.4rem 0.6rem;
-  border: 1px solid #c7c7cc;
+  background: var(--panel-2);
+  color: var(--tekst);
+  border: 1px solid var(--kant);
   border-radius: 8px;
 }
 
 input[type="range"] {
   width: 100%;
-  max-width: 24rem;
+  accent-color: var(--aksent);
 }
 
-input[type="checkbox"],
-input[type="radio"] {
-  width: 1.15rem;
-  height: 1.15rem;
+input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--aksent);
 }
 
 .hint {
-  display: block;
   font-size: 0.85rem;
-  color: #6e6e73;
-  margin-top: 0.3rem;
+  color: var(--tekst-svak);
 }
 
-table {
-  width: 100%;
-  border-collapse: collapse;
+/* Rutenett --------------------------------------------------------------- */
+
+.rutenett {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1.1fr) repeat(3, 1fr);
+  gap: 0.4rem;
+}
+
+.kolonnehode {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--tekst-svak);
+  padding: 0 0.25rem 0.2rem;
+  align-self: end;
+}
+
+.kolonnehode.hjorne {
+  border: 0;
+}
+
+.klassecelle {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.1rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--panel-2);
+  border: 1px solid var(--kant);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.knavn {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.kundertittel {
+  font-size: 0.74rem;
+  color: var(--tekst-svak);
+}
+
+.celle {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  padding: 0.55rem 0.4rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
   font-variant-numeric: tabular-nums;
 }
 
-th,
-td {
-  text-align: left;
-  padding: 0.45rem 0.5rem;
-  border-bottom: 1px solid #e5e5ea;
-  font-size: 0.95rem;
-}
-
-th:nth-child(n + 2),
-td:nth-child(n + 2) {
-  white-space: nowrap;
-}
-
-th {
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: #6e6e73;
-}
-
-tr.dim td {
-  background: #fff8e6;
-  font-weight: 600;
-}
-
-.merke {
-  display: block;
-  white-space: normal;
+.celle .grense {
   font-size: 0.72rem;
-  font-weight: 600;
-  color: #9a6b00;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  opacity: 0.85;
 }
 
-td.ok {
-  color: #1a7f37;
-  font-weight: 600;
+.celle .cavstand {
+  font-size: 1.15rem;
+  font-weight: 700;
 }
 
-td.for-hoyt {
-  color: #c40d2e;
-  font-weight: 600;
+.hake {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.hake.ok {
+  color: var(--ok);
+}
+
+.hake.feil {
+  color: var(--feil);
+}
+
+/* Valgt klasse: ring rundt etiketten (driver detaljpanelet). */
+.klassecelle.valgt {
+  box-shadow: 0 0 0 2px var(--aksent);
+}
+
+/* Alle celler med samme dB(A)-grense som den valgte rammes inn med stiplet
+   gult, så like verdier (f.eks. A dag = B kveld = C natt) blir tydelige.
+   'outline' brukes så rammen ikke flytter layouten. */
+.celle.samme {
+  outline: 2px dashed #ffd166;
+  outline-offset: -3px;
+}
+
+/* Selve den valgte cellen er hovedmarkeringen: heltrukket gull ramme med en
+   svak innvendig glød, så ankeret skiller seg fra de øvrige like cellene. */
+.celle.valgt-celle {
+  outline: 2px solid #ffd166;
+  outline-offset: -3px;
+  box-shadow: inset 0 0 0 3px rgb(255 209 102 / 30%);
+}
+
+/* Heatmap: høyere grense (mildere) = mørkere blå; lavere (strengere) = lysere.
+   Diagonalen A dag = B kveld = C natt (alle 35) deler dermed samme tone. */
+.h25 { background: #d8e8f7; color: #0b2540; }
+.h28 { background: #b9d4ee; color: #0b2540; }
+.h30 { background: #99c0e4; color: #0b2540; }
+.h33 { background: #6fa3d6; color: #08203a; }
+.h35 { background: #4d8bca; color: #fff; }
+.h38 { background: #356fb4; color: #fff; }
+.h40 { background: #235696; color: #fff; }
+.h45 { background: #163d72; color: #fff; }
+
+.likhet {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--tekst-svak);
+  margin: 0.9rem 0 0.6rem;
+}
+
+.legende {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.72rem;
+  color: var(--tekst-svak);
+}
+
+.legende-bar {
+  flex: 1;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #d8e8f7, #163d72);
+}
+
+/* Detaljpanel ------------------------------------------------------------ */
+
+.detalj-hode {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+}
+
+.chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.4rem 0.7rem;
+  background: var(--panel-2);
+  border: 1px solid var(--kant);
+  border-radius: 10px;
+}
+
+.chip-etikett {
+  font-size: 0.72rem;
+  color: var(--tekst-svak);
+}
+
+.chip-verdi {
+  font-size: 1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Chip med tooltip: ⓘ-ikon, forklaring vises ved hover/fokus. */
+.chip.tip {
+  position: relative;
+  cursor: help;
+}
+
+.chip .info {
+  margin-left: 0.3rem;
+  color: var(--aksent);
+  font-style: normal;
+}
+
+.chip .tip-tekst {
+  position: absolute;
+  bottom: calc(100% + 0.4rem);
+  left: 0;
+  z-index: 10;
+  width: max-content;
+  max-width: 17rem;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--tekst);
+  background: #0b0e13;
+  border: 1px solid var(--kant);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 45%);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+}
+
+.chip.tip:hover .tip-tekst,
+.chip.tip:focus-within .tip-tekst {
+  opacity: 1;
+  visibility: visible;
+}
+
+.detalj-tekst {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--tekst);
+}
+
+.detalj-tekst .ok {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.detalj-tekst .for-hoyt {
+  color: var(--feil);
+  font-weight: 700;
 }
 
 .feil {
-  color: #c40d2e;
+  color: var(--feil);
   font-weight: 600;
-}
-
-.tabell-kolonner {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-}
-
-@media (max-width: 32rem) {
-  .tabell-kolonner {
-    grid-template-columns: 1fr;
-  }
-}
-
-.tabell-kolonne h3 {
-  font-size: 0.95rem;
-  margin: 0 0 0.5rem;
-}
-
-.tabell-kolonne table {
-  margin-bottom: 0.9rem;
-}
-
-.tabell-kolonne table:last-child {
-  margin-bottom: 0;
-}
-
-.tabell-kolonne th {
-  font-size: 0.72rem;
-}
-
-.tabell-kolonne td,
-.tabell-kolonne th {
-  padding: 0.3rem 0.4rem;
 }
 
 .fotnote {
   font-size: 0.8rem;
-  color: #6e6e73;
+  color: var(--tekst-svak);
   margin: 1rem 0.25rem;
+}
+
+/* Mobil ------------------------------------------------------------------ */
+
+@media (max-width: 34rem) {
+  .inndata {
+    grid-template-columns: 1fr;
+  }
+
+  .rutenett {
+    grid-template-columns: minmax(5.5rem, 1fr) repeat(3, 1fr);
+    gap: 0.3rem;
+  }
+
+  .knavn {
+    font-size: 0.82rem;
+  }
+
+  .kundertittel {
+    font-size: 0.66rem;
+  }
+
+  .celle .cavstand {
+    font-size: 1rem;
+  }
+
+  .kolonnehode {
+    font-size: 0.66rem;
+  }
 }

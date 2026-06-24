@@ -1,26 +1,37 @@
 name: test-build-deploy
 
+# Publisering skjer til gh-pages-branchen (ikke offisiell Pages-deploy), slik
+# at hver PR kan få en egen preview i en undermappe. Pages-kilden må derfor
+# stå på «Deploy from a branch → gh-pages / (root)» i repo-innstillingene.
+#
+# - push til main         → bygg + deploy til gh-pages-roten (produksjon)
+# - pull_request (åpen)   → bygg + deploy preview til gh-pages/pr-preview/pr-N/
+# - pull_request (lukket) → fjern preview-mappa igjen
+#
+# Endring av kun default-oppsettet trenger ingen ny deploy – appen henter
+# frontend/static/default.json live fra GitHub raw ved refresh. Manuell deploy
+# (for å oppdatere den bundlede fallback-kopien) via "Run workflow".
+
 on:
   push:
     branches: [main]
-    # Endring av kun default-oppsettet trenger ingen ny deploy – appen henter
-    # frontend/static/default.json live fra GitHub raw ved refresh. Manuell
-    # deploy (for å oppdatere den bundlede fallback-kopien) via "Run workflow".
     paths-ignore:
       - 'frontend/static/default.json'
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
+  pull-requests: write
 
 concurrency:
-  group: pages
+  group: deploy-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
   test:
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,13 +56,10 @@ jobs:
       - name: Run tests
         run: cabal test all
 
-  build-deploy:
+  build:
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -73,16 +81,74 @@ jobs:
       - name: Build wasm frontend
         run: ./build.sh
 
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
         with:
-          enablement: true
-
-      - name: Upload pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
+          name: dist
           path: dist
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+  # Produksjon: push til main → gh-pages-roten. Beholder eksisterende
+  # PR-previews (clean-exclude).
+  deploy-main:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: gh-pages-write
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Deploy to gh-pages (root)
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: dist
+          clean: true
+          clean-exclude: pr-preview
+
+  # PR-preview: bygg/oppdater preview i gh-pages/pr-preview/pr-N/ og kommenter
+  # PR-en med URL.
+  deploy-preview:
+    needs: build
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: gh-pages-write
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Deploy PR preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: dist
+          umbrella-dir: pr-preview
+
+  # Rydd preview-mappa når PR-en lukkes (trenger ikke bygg).
+  cleanup-preview:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: gh-pages-write
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Remove PR preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          umbrella-dir: pr-preview
+          action: auto

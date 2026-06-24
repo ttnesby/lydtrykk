@@ -5,6 +5,8 @@ module Lyd.Beregning
   ( -- * Grenseverdier (NS 8175)
     Tidsrom (..),
     Lydklasse (..),
+    klasseOffset,
+    grenseC,
     grense,
 
     -- * Domenetyper
@@ -25,6 +27,7 @@ module Lyd.Beregning
     vinkelkorreksjon,
     lydnivaa,
     avstand,
+    paakrevdDemping,
 
     -- * Avstandstabell (vinkel × tidsrom × klasse)
     noenVinkler,
@@ -43,17 +46,30 @@ import Data.Maybe (mapMaybe)
 data Tidsrom = Dag | Kveld | Natt
   deriving (Eq, Ord, Show, Enum, Bounded)
 
--- | Lydklasse etter NS 8175. Klasse C er minstekrav, klasse B er anbefalt
--- (5 dBA strengere).
-data Lydklasse = KlasseC | KlasseB
+-- | Lydklasse etter NS 8175, fra strengest til mildest. Klasse C er
+-- minstekrav; B er anbefalt (5 dBA strengere); A er streng/frivillig
+-- (10 dBA strengere); B+ er en mellomklasse (7 dBA strengere). Rekkefølgen
+-- følger visningen: strengeste klasse først.
+data Lydklasse = KlasseA | KlasseBpluss | KlasseB | KlasseC
   deriving (Eq, Ord, Show, Enum, Bounded)
 
--- | Grenseverdi (LAFmax på uteoppholdsareal) for gitt lydklasse og tidsrom.
+-- | Hvor mange dBA strengere enn Klasse C (minstekrav) en lydklasse er.
+klasseOffset :: Lydklasse -> Double
+klasseOffset KlasseA = 10
+klasseOffset KlasseBpluss = 7
+klasseOffset KlasseB = 5
+klasseOffset KlasseC = 0
+
+-- | Klasse C-grensen (minstekrav, LAFmax på uteoppholdsareal) per tidsrom.
+grenseC :: Tidsrom -> Desibel
+grenseC Dag = Desibel 45
+grenseC Kveld = Desibel 40
+grenseC Natt = Desibel 35
+
+-- | Grenseverdi (LAFmax på uteoppholdsareal) for gitt lydklasse og tidsrom:
+-- minstekravet (Klasse C) minus klassens 'klasseOffset'.
 grense :: Lydklasse -> Tidsrom -> Desibel
-grense KlasseC Dag = Desibel 45
-grense KlasseC Kveld = Desibel 40
-grense KlasseC Natt = Desibel 35
-grense KlasseB tidsrom = Desibel (dBA (grense KlasseC tidsrom) - 5)
+grense klasse t = Desibel (dBA (grenseC t) - klasseOffset klasse)
 
 -- | Lydtrykknivå i dBA.
 newtype Desibel = Desibel {dBA :: Double}
@@ -102,7 +118,9 @@ data Kilde = Kilde
     oppgittNivaa :: Desibel,
     -- | r0: avstanden nivået er oppgitt for, normalt 1 m
     referanseavstand :: Meter,
-    montering :: Montering
+    montering :: Montering,
+    -- | demping (dBA) fra kabinett/innebygging av utedelen; 0 hvis ingen
+    kabinettDemping :: Double
   }
   deriving (Eq, Show)
 
@@ -114,12 +132,15 @@ standardR0 = Meter 1
 veggtillegg :: Double
 veggtillegg = 3
 
--- | Kildens effektive nivå: oppgitt nivå, pluss 'veggtillegg' hvis
--- utedelen er veggmontert.
+-- | Kildens effektive nivå: oppgitt nivå, pluss 'veggtillegg' hvis utedelen
+-- er veggmontert, minus eventuell 'kabinettDemping'.
 effektivtKildenivaa :: Kilde -> Desibel
-effektivtKildenivaa kilde = case montering kilde of
-  Frittstaaende -> oppgittNivaa kilde
-  Veggmontert -> Desibel (dBA (oppgittNivaa kilde) + veggtillegg)
+effektivtKildenivaa kilde =
+  Desibel (dBA (oppgittNivaa kilde) + vegg - kabinettDemping kilde)
+  where
+    vegg = case montering kilde of
+      Frittstaaende -> 0
+      Veggmontert -> veggtillegg
 
 -- | Retningskorreksjon i dBA: glatt cosinus-karakteristikk, 0 dB rett frem
 -- og 5 dBA demping ved 90°. ('Vinkel'-invarianten garanterer 0–90°, der
@@ -143,6 +164,16 @@ avstand kilde v (Desibel lp) =
   where
     Desibel lp0 = effektivtKildenivaa kilde
     Meter r0 = referanseavstand kilde
+
+-- | Hvor mye kabinett-demping (dBA) som trengs for at lydnivået i gitt vinkel
+-- og avstand akkurat når 'grenseverdi'. Beregnes mot kilden uten dagens
+-- kabinett, så svaret er det totale dempingsbehovet (0 hvis grensen alt er
+-- oppfylt uten kabinett).
+paakrevdDemping :: Kilde -> Vinkel -> Meter -> Desibel -> Double
+paakrevdDemping kilde v r (Desibel grenseverdi) =
+  max 0 (dBA (lydnivaa utenKabinett v r) - grenseverdi)
+  where
+    utenKabinett = kilde {kabinettDemping = 0}
 
 -- | Standard vinkelsett for avstandstabellen: rett frem, så 50–90° i steg
 -- på 10°. Som i den verifiserte notatboken (@noenVinkler@).
