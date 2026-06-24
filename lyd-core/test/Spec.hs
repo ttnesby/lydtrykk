@@ -12,7 +12,7 @@ tests :: TestTree
 tests =
   testGroup
     "lyd-core"
-    [grenseTests, vinkelTests, kildeTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper]
+    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper]
 
 grenseTests :: TestTree
 grenseTests =
@@ -25,7 +25,22 @@ grenseTests =
       testCase "klasse B = klasse C - 5" $ do
         grense KlasseB Dag @?= Desibel 40
         grense KlasseB Kveld @?= Desibel 35
-        grense KlasseB Natt @?= Desibel 30
+        grense KlasseB Natt @?= Desibel 30,
+      testCase "klasse B+ = klasse C - 7" $ do
+        grense KlasseBpluss Dag @?= Desibel 38
+        grense KlasseBpluss Kveld @?= Desibel 33
+        grense KlasseBpluss Natt @?= Desibel 28,
+      testCase "klasse A = klasse C - 10" $ do
+        grense KlasseA Dag @?= Desibel 35
+        grense KlasseA Kveld @?= Desibel 30
+        grense KlasseA Natt @?= Desibel 25,
+      testCase "klasseOffset C/B/B+/A = 0/5/7/10" $ do
+        klasseOffset KlasseC @?= 0
+        klasseOffset KlasseB @?= 5
+        klasseOffset KlasseBpluss @?= 7
+        klasseOffset KlasseA @?= 10,
+      testCase "klasserekkefølge: strengest først" $
+        [minBound .. maxBound] @?= [KlasseA, KlasseBpluss, KlasseB, KlasseC]
     ]
 
 vinkelTests :: TestTree
@@ -48,16 +63,57 @@ kildeTests =
         effektivtKildenivaa (frittstaaende 53) @?= Desibel 53,
       testCase "veggmontert = oppgitt + 3" $
         effektivtKildenivaa (frittstaaende 53) {montering = Veggmontert}
-          @?= Desibel 56
+          @?= Desibel 56,
+      testCase "kabinett trekker fra demping" $
+        effektivtKildenivaa (frittstaaende 52) {kabinettDemping = 14}
+          @?= Desibel 38,
+      testCase "vegg + kabinett: oppgitt + 3 - kabinett" $
+        effektivtKildenivaa
+          (frittstaaende 52) {montering = Veggmontert, kabinettDemping = 14}
+          @?= Desibel 41
     ]
 
--- | Frittstående kilde med standard referanseavstand (1 m).
+-- | Påkrevd kabinett-demping (omvendt beregning) mot mockup-tallet i issue #5:
+-- 52 dBA frittstående, vinkel 90° (−5 dB), 3 m, nattgrense B+ = 28 → ≈ 9,5 dB.
+-- Beregnes mot kilden uten dagens kabinett, så svaret er uavhengig av et
+-- allerede satt kabinett.
+paakrevdDempingTests :: TestTree
+paakrevdDempingTests =
+  testGroup
+    "påkrevd kabinett-demping"
+    [ testCase "52 dBA, 90°, 3 m, grense 28 → ≈ 9,5 dB" $
+        case nyVinkel 90 of
+          Nothing -> assertFailure "ugyldig vinkel"
+          Just v ->
+            assertBool
+              "≈ 9,46 dB"
+              ( abs
+                  ( paakrevdDemping (frittstaaende 52) v (Meter 3) (Desibel 28)
+                      - 9.4576
+                  )
+                  < 1e-3
+              ),
+      testCase "uavhengig av allerede satt kabinett" $
+        case nyVinkel 90 of
+          Nothing -> assertFailure "ugyldig vinkel"
+          Just v ->
+            paakrevdDemping (frittstaaende 52) {kabinettDemping = 14} v (Meter 3) (Desibel 28)
+              @?= paakrevdDemping (frittstaaende 52) v (Meter 3) (Desibel 28),
+      testCase "0 når grensen alt er oppfylt" $
+        case nyVinkel 0 of
+          Nothing -> assertFailure "ugyldig vinkel"
+          Just v ->
+            paakrevdDemping (frittstaaende 40) v (Meter 10) (Desibel 50) @?= 0
+    ]
+
+-- | Frittstående kilde med standard referanseavstand (1 m), uten kabinett.
 frittstaaende :: Double -> Kilde
 frittstaaende lp0 =
   Kilde
     { oppgittNivaa = Desibel lp0,
       referanseavstand = standardR0,
-      montering = Frittstaaende
+      montering = Frittstaaende,
+      kabinettDemping = 0
     }
 
 -- | Avrunding til to desimaler, slik de gylne verdiene er oppgitt.

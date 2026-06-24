@@ -17,6 +17,7 @@ import Text.Read (readMaybe)
 data Model = Model
   { _nivaaTekst :: MisoString,
     _monteringValg :: Montering,
+    _kabinettTekst :: MisoString,
     _vinkelValg :: Vinkel,
     _valgtKlasse :: Lydklasse,
     _avstandTekst :: MisoString
@@ -28,6 +29,9 @@ nivaaTekst = lens _nivaaTekst $ \r f -> r {_nivaaTekst = f}
 
 monteringValg :: Lens Model Montering
 monteringValg = lens _monteringValg $ \r f -> r {_monteringValg = f}
+
+kabinettTekst :: Lens Model MisoString
+kabinettTekst = lens _kabinettTekst $ \r f -> r {_kabinettTekst = f}
 
 vinkelValg :: Lens Model Vinkel
 vinkelValg = lens _vinkelValg $ \r f -> r {_vinkelValg = f}
@@ -41,6 +45,7 @@ avstandTekst = lens _avstandTekst $ \r f -> r {_avstandTekst = f}
 data Action
   = SettNivaa MisoString
   | SettVeggmontert Checked
+  | SettKabinett MisoString
   | SettVinkel MisoString
   | SettKlasse Lydklasse
   | SettAvstand MisoString
@@ -71,7 +76,12 @@ foreign import javascript unsafe "$1[$2]" js_arrAt :: JSVal -> Int -> Double
 -- ev. veggtillegg), så monteringen settes til 'Frittstaaende' her.
 simKilde :: Double -> Kilde
 simKilde src =
-  Kilde {oppgittNivaa = Desibel src, referanseavstand = standardR0, montering = Frittstaaende}
+  Kilde
+    { oppgittNivaa = Desibel src,
+      referanseavstand = standardR0,
+      montering = Frittstaaende,
+      kabinettDemping = 0
+    }
 
 -- | Retningsgevinst (≤ 0 dB) — negasjon av kjernens 'vinkelkorreksjon'.
 js_dirGain :: Double -> Double
@@ -100,9 +110,10 @@ startModel =
   Model
     { _nivaaTekst = "50",
       _monteringValg = Frittstaaende,
+      _kabinettTekst = "0",
       _vinkelValg = startVinkel,
-      _valgtKlasse = KlasseC,
-      _avstandTekst = "6"
+      _valgtKlasse = KlasseB,
+      _avstandTekst = "5"
     }
 
 updateModel :: Action -> Effect parent props Model Action
@@ -110,6 +121,7 @@ updateModel = \case
   SettNivaa s -> nivaaTekst .= s
   SettVeggmontert (Checked b) ->
     monteringValg .= if b then Veggmontert else Frittstaaende
+  SettKabinett s -> kabinettTekst .= s
   SettVinkel s -> case nyVinkel =<< parseDouble s of
     Just v -> vinkelValg .= v
     Nothing -> pure ()
@@ -132,17 +144,31 @@ kilde m = do
     Kilde
       { oppgittNivaa = Desibel (klamp 40 70 v),
         referanseavstand = standardR0,
-        montering = m ^. monteringValg
+        montering = m ^. monteringValg,
+        kabinettDemping = kabinett m
       }
+
+-- | Kabinett-demping (dB) fra inndata; tomt/ugyldig felt tolkes som 0.
+kabinett :: Model -> Double
+kabinett m = max 0 (fromMaybe 0 (parseDouble (m ^. kabinettTekst)))
+
+-- | Avstand til nabo fra inndata, hvis gyldig (> 0 m).
+naboAvstand :: Model -> Maybe Meter
+naboAvstand m = case parseDouble (m ^. avstandTekst) of
+  Just r | r > 0 -> Just (Meter r)
+  _ -> Nothing
+
+-- | Effektivt nivå mot naboen ved 1 m: effektivt kildenivå (inkl. vegg og
+-- kabinett) minus retningskorreksjonen for den valgte vinkelen.
+effektivtMotNabo :: Kilde -> Vinkel -> Desibel
+effektivtMotNabo k v =
+  Desibel (dBA (effektivtKildenivaa k) - vinkelkorreksjon v)
 
 -- | Tall med én desimal og norsk desimaltegn.
 desimal :: Double -> MisoString
 desimal x = ms (map punktumTilKomma (showFFloat (Just 1) x ""))
   where
     punktumTilKomma c = if c == '.' then ',' else c
-
-visDb :: Desibel -> MisoString
-visDb d = desimal (dBA d) <> " dBA"
 
 visMeter :: Meter -> MisoString
 visMeter r = desimal (meter r) <> " m"
@@ -155,18 +181,47 @@ startVinkel = fromMaybe rettFrem (nyVinkel 45)
 visVinkel :: Vinkel -> MisoString
 visVinkel v = ms (show (round (grader v) :: Int)) <> "°"
 
-tidsromNavn :: Tidsrom -> MisoString
-tidsromNavn Dag = "Dag (07–19)"
-tidsromNavn Kveld = "Kveld (19–23)"
-tidsromNavn Natt = "Natt (23–07)"
+-- | Tidsrom-overskrift i rutenettet. Natt er dimensjonerende, derav «dim.».
+tidsromKort :: Tidsrom -> MisoString
+tidsromKort Dag = "Dag 07–19"
+tidsromKort Kveld = "Kveld 19–23"
+tidsromKort Natt = "Natt 23–07 · dim."
 
 klasseNavn :: Lydklasse -> MisoString
-klasseNavn KlasseC = "Klasse C (minstekrav)"
-klasseNavn KlasseB = "Klasse B (anbefalt)"
+klasseNavn KlasseA = "Klasse A"
+klasseNavn KlasseBpluss = "Klasse B+"
+klasseNavn KlasseB = "Klasse B"
+klasseNavn KlasseC = "Klasse C"
 
--- | Faktiske vinkelgrader for tabellen, f.eks. «0°», «50°».
-vinkelGrad :: Vinkel -> MisoString
-vinkelGrad v = ms (show (round (grader v) :: Int)) <> "°"
+klasseUndertittel :: Lydklasse -> MisoString
+klasseUndertittel KlasseA = "streng · frivillig"
+klasseUndertittel KlasseBpluss = "custom · C − 7 dB"
+klasseUndertittel KlasseB = "anbefalt · frivillig"
+klasseUndertittel KlasseC = "minstekrav"
+
+-- | Klassene i visningsrekkefølge: strengest øverst.
+alleKlasser :: [Lydklasse]
+alleKlasser = [minBound .. maxBound]
+
+-- | CSS-klasse for heatmap-tone etter grenseverdi (strengere = mørkere blå).
+-- Grensene er heltall, så «h25»…«h45» dekker alle cellene.
+heatKlasse :: Desibel -> MisoString
+heatKlasse (Desibel g) = ms ("h" <> show (round g :: Int))
+
+-- | Grenseverdi som heltall, «35 dB(A)».
+visGrense :: Desibel -> MisoString
+visGrense (Desibel g) = ms (show (round g :: Int)) <> " dB(A)"
+
+-- | Beregnet nivå med én desimal, «23,5 dB(A)».
+visNivaa :: Desibel -> MisoString
+visNivaa d = desimal (dBA d) <> " dB(A)"
+
+-- | Vinkel og tilhørende demping, «90° · −5,0 dB».
+visVinkelDemping :: Vinkel -> MisoString
+visVinkelDemping v = visVinkel v <> " · " <> tegn <> desimal korr <> " dB"
+  where
+    korr = vinkelkorreksjon v
+    tegn = if korr > 0 then "−" else ""
 
 -- Visning -----------------------------------------------------------------
 
@@ -185,9 +240,8 @@ viewModel _ m =
         Just k ->
           H.div_
             []
-            [ modusA m k,
-              modusB m k,
-              modusC k
+            [ rutenettPanel m k,
+              detaljPanel m k
             ],
       H.p_
         [P.class_ "fotnote"]
@@ -199,14 +253,15 @@ viewModel _ m =
         ]
     ]
 
+-- | Kompakt inndata-rad: nivå, vegg, kabinett, vinkel, avstand, og effektivt
+-- nivå mot naboen.
 inndataPanel :: Model -> View Model Action
 inndataPanel m =
   H.section_
-    [P.class_ "panel"]
-    [ H.h2_ [] [text "Inndata"],
-      H.div_
+    [P.class_ "panel inndata"]
+    [ H.div_
         [P.class_ "felt"]
-        [ H.label_ [P.for_ "nivaa"] [text "Oppgitt lydnivå utedel, 1 m frittfelt (dBA)"],
+        [ H.label_ [P.for_ "nivaa"] [text "Lydnivå 1 m (dBA)"],
           H.input_
             [ P.id_ "nivaa",
               P.type_ "number",
@@ -226,25 +281,24 @@ inndataPanel m =
                   P.checked_ (m ^. monteringValg == Veggmontert),
                   E.onChecked SettVeggmontert
                 ],
-              text " Veggmontert utedel (+3 dBA refleksjon)"
-            ],
-          H.span_
-            [P.class_ "hint"]
-            [ text
-                ( "Effektivt kildenivå: "
-                    <> maybe "–" (visDb . effektivtKildenivaa) (kilde m)
-                )
+              text " +3 dB vegg"
             ]
         ],
       H.div_
         [P.class_ "felt"]
-        [ H.label_
-            [P.for_ "vinkel"]
-            [ text
-                ( "Vinkel til nabo relativt viftens hovedretning: "
-                    <> visVinkel (m ^. vinkelValg)
-                )
-            ],
+        [ H.label_ [P.for_ "kabinett"] [text "Kabinett (dB)"],
+          H.input_
+            [ P.id_ "kabinett",
+              P.type_ "number",
+              P.min_ "0",
+              P.step_ "1",
+              P.value_ (m ^. kabinettTekst),
+              E.onInput SettKabinett
+            ]
+        ],
+      H.div_
+        [P.class_ "felt vinkelfelt"]
+        [ H.label_ [P.for_ "vinkel"] [text ("Vinkel · " <> visVinkelDemping (m ^. vinkelValg))],
           H.input_
             [ P.id_ "vinkel",
               P.type_ "range",
@@ -253,93 +307,11 @@ inndataPanel m =
               P.step_ "1",
               P.value_ (ms (show (round (grader (m ^. vinkelValg)) :: Int))),
               E.onInput SettVinkel
-            ],
-          H.span_
-            [P.class_ "hint"]
-            [text "Retningskorreksjon følger en cosinus-karakteristikk: 0 dBA rett frem, økende til 5 dBA demping ved 90°."]
+            ]
         ],
       H.div_
         [P.class_ "felt"]
-        [ H.span_ [] [text "Lydklasse"],
-          H.label_
-            [P.class_ "radio"]
-            [ H.input_
-                [ P.type_ "radio",
-                  P.name_ "klasse",
-                  P.checked_ (m ^. valgtKlasse == KlasseC),
-                  E.onClick (SettKlasse KlasseC)
-                ],
-              text " C (minstekrav)"
-            ],
-          H.label_
-            [P.class_ "radio"]
-            [ H.input_
-                [ P.type_ "radio",
-                  P.name_ "klasse",
-                  P.checked_ (m ^. valgtKlasse == KlasseB),
-                  E.onClick (SettKlasse KlasseB)
-                ],
-              text " B (anbefalt)"
-            ]
-        ]
-    ]
-
--- | Modus A: nødvendig minsteavstand per tidsrom.
-modusA :: Model -> Kilde -> View Model Action
-modusA m k =
-  H.section_
-    [P.class_ "panel"]
-    [ H.h2_ [] [text "Avstand for å overholde grense"],
-      H.table_
-        []
-        [ H.thead_
-            []
-            [ H.tr_
-                []
-                [ H.th_ [] [text "Tidsrom"],
-                  H.th_ [] [text "Grense"],
-                  H.th_ [] [text "Minsteavstand"]
-                ]
-            ],
-          H.tbody_ [] (vanligeRader ++ [avslagRad])
-        ],
-      H.p_
-        [P.class_ "hint"]
-        [text "Nattavslag: pumpen slås av kl. 23–07, da er kveldsgrensen dimensjonerende."]
-    ]
-  where
-    klasse = m ^. valgtKlasse
-    v = m ^. vinkelValg
-    avstandFor g = avstand k v g
-    rader = [(tidsromNavn t, grense klasse t) | t <- [Dag, Kveld, Natt]]
-    stoerst = maximum [avstandFor g | (_, g) <- rader]
-    vanligeRader =
-      [ rad navn g (avstandFor g == stoerst) "dimensjonerende"
-      | (navn, g) <- rader
-      ]
-    avslagRad =
-      rad "Natt m/ nattavslag" (grense klasse Kveld) True "dimensjonerende m/ nattavslag"
-    rad navn g dim merke =
-      H.tr_
-        [P.class_ (if dim then "dim" else "")]
-        [ H.td_ [] [text navn],
-          H.td_ [] [text (visDb g)],
-          H.td_
-            []
-            [ text (visMeter (avstandFor g)),
-              if dim then H.span_ [P.class_ "merke"] [text merke] else text ""
-            ]
-        ]
-
--- | Modus B: lydnivå ved gitt avstand, innenfor/utenfor per tidsrom.
-modusB :: Model -> Kilde -> View Model Action
-modusB m k =
-  H.section_
-    [P.class_ "panel"]
-    [ H.h2_ [] [text "Lydnivå ved gitt avstand"],
-      H.div_
-        [P.class_ "felt"]
-        [ H.label_ [P.for_ "avstand"] [text "Avstand til nabo (meter)"],
+        [ H.label_ [P.for_ "avstand"] [text "Avstand nabo (m)"],
           H.input_
             [ P.id_ "avstand",
               P.type_ "number",
@@ -349,99 +321,129 @@ modusB m k =
               E.onInput SettAvstand
             ]
         ],
-      case mr of
-        Nothing -> H.p_ [P.class_ "feil"] [text "Oppgi gyldig avstand (> 0 m)."]
-        Just r -> resultat r
+      H.div_
+        [P.class_ "felt effektivt"]
+        [ H.span_ [P.class_ "hint"]
+            [ text
+                ( "Effektivt: "
+                    <> maybe "–" (\k -> visNivaa (effektivtMotNabo k (m ^. vinkelValg))) (kilde m)
+                )
+            ]
+        ]
+    ]
+
+-- | Rutenett: 4 lydklasser (rader) × 3 tidsrom (kolonner). Hver celle viser
+-- grenseverdi og nødvendig avstand, fargelagt etter strenghet, med en hake
+-- når avstanden til naboen er innenfor. Klikk på en rad velger klassen som
+-- vises i detaljpanelet.
+rutenettPanel :: Model -> Kilde -> View Model Action
+rutenettPanel m k =
+  H.section_
+    [P.class_ "panel"]
+    [ H.div_ [P.class_ "rutenett"] (hodeceller ++ concatMap klasseCeller alleKlasser),
+      likhetNotat m k,
+      legende
+    ]
+  where
+    v = m ^. vinkelValg
+    mr = naboAvstand m
+    valgt = m ^. valgtKlasse
+    hodeceller =
+      H.div_ [P.class_ "kolonnehode hjorne"] []
+        : [H.div_ [P.class_ "kolonnehode"] [text (tidsromKort t)] | t <- [Dag, Kveld, Natt]]
+    klasseCeller klasse = etikett : [celle t | t <- [Dag, Kveld, Natt]]
+      where
+        velg = if klasse == valgt then " valgt" else ""
+        etikett =
+          H.div_
+            [P.class_ ("klassecelle" <> velg), E.onClick (SettKlasse klasse)]
+            [ H.span_ [P.class_ "knavn"] [text (klasseNavn klasse)],
+              H.span_ [P.class_ "kundertittel"] [text (klasseUndertittel klasse)]
+            ]
+        celle t =
+          let g = grense klasse t
+              d = avstand k v g
+              oppfylt = maybe False (\r -> lydnivaa k v r <= g) mr
+           in H.div_
+                [P.class_ ("celle " <> heatKlasse g <> velg), E.onClick (SettKlasse klasse)]
+                [ H.span_ [P.class_ "grense"] [text (visGrense g)],
+                  H.span_ [P.class_ "cavstand"] [text (visMeter d)],
+                  if oppfylt then H.span_ [P.class_ "hake"] [text "✓"] else text ""
+                ]
+
+-- | Notat om −5 dB-gitteret: A dag = B kveld = C natt (alle 35 dB(A)).
+likhetNotat :: Model -> Kilde -> View Model Action
+likhetNotat m k =
+  H.p_
+    [P.class_ "likhet"]
+    [ text
+        ( visGrense (Desibel 35)
+            <> " → "
+            <> visMeter (avstand k (m ^. vinkelValg) (Desibel 35))
+            <> " · A dag = B kveld = C natt"
+        )
+    ]
+
+-- | Fargeforklaring: fra strengere (mørk, lengre avstand) til mildere.
+legende :: View Model Action
+legende =
+  H.div_
+    [P.class_ "legende"]
+    [ H.span_ [] [text "strengere grense (lengre avstand)"],
+      H.div_ [P.class_ "legende-bar"] [],
+      H.span_ [] [text "mildere grense"]
+    ]
+
+-- | Detaljpanel for valgt klasse: avstand per tidsrom, påkrevd nattkabinett
+-- ved naboavstanden, og en kort tolkning.
+detaljPanel :: Model -> Kilde -> View Model Action
+detaljPanel m k =
+  H.section_
+    [P.class_ "panel detalj"]
+    [ H.div_
+        [P.class_ "detalj-hode"]
+        [ H.h2_ [] [text (klasseNavn klasse)],
+          H.span_ [P.class_ "kundertittel"] [text (klasseUndertittel klasse <> " — grense LAFmax")]
+        ],
+      H.div_ [P.class_ "chips"] (avstandChips ++ [kabinettChip]),
+      H.p_ [P.class_ "detalj-tekst"] forklaring
     ]
   where
     klasse = m ^. valgtKlasse
     v = m ^. vinkelValg
-    mr = case parseDouble (m ^. avstandTekst) of
-      Just r | r > 0 -> Just (Meter r)
-      _ -> Nothing
-    resultat r =
+    mr = naboAvstand m
+    nattG = grense klasse Natt
+    chip etikett verdi =
       H.div_
-        []
-        [ H.p_
-            []
-            [ text "Beregnet lydnivå: ",
-              H.strong_ [] [text (visDb nivaa)]
-            ],
-          H.table_
-            []
-            [ H.thead_
-                []
-                [ H.tr_
-                    []
-                    [ H.th_ [] [text "Tidsrom"],
-                      H.th_ [] [text "Grense"],
-                      H.th_ [] [text "Status"]
-                    ]
-                ],
-              H.tbody_
-                []
-                ( [statusRad (tidsromNavn t) (grense klasse t) | t <- [Dag, Kveld, Natt]]
-                    ++ [statusRad "Natt m/ nattavslag" (grense klasse Kveld)]
-                )
-            ]
+        [P.class_ "chip"]
+        [ H.span_ [P.class_ "chip-etikett"] [text etikett],
+          H.span_ [P.class_ "chip-verdi"] [text verdi]
         ]
-      where
-        nivaa = lydnivaa k v r
-        statusRad navn g =
-          let innenfor = nivaa <= g
-           in H.tr_
-                []
-                [ H.td_ [] [text navn],
-                  H.td_ [] [text (visDb g)],
-                  H.td_
-                    [P.class_ (if innenfor then "ok" else "for-hoyt")]
-                    [text (if innenfor then "Innenfor" else "Utenfor")]
-                ]
-
--- | Modus C: minsteavstand for et fast vinkelsett, Klasse C og B side om
--- side, én undertabell per tidsrom — som notatbokens grid.
-modusC :: Kilde -> View Model Action
-modusC k =
-  H.section_
-    [P.class_ "panel"]
-    [ H.h2_ [] [text "Avstandstabell — vinkel og lydklasse"],
-      H.div_
-        [P.class_ "tabell-kolonner"]
-        [klasseKolonne k klasse | klasse <- [KlasseC, KlasseB]],
-      H.p_
-        [P.class_ "hint"]
-        [text "Minsteavstand (m) for å overholde grensen i hvert tidsrom, ved faste vinkler relativt viftens hovedretning. Følger effektivt kildenivå (inkl. veggmontering)."]
-    ]
-
--- | Én klasse-kolonne: overskrift og tre undertabeller (Dag/Kveld/Natt).
-klasseKolonne :: Kilde -> Lydklasse -> View Model Action
-klasseKolonne k klasse =
-  H.div_
-    [P.class_ "tabell-kolonne"]
-    ( H.h3_ [] [text (klasseNavn klasse)]
-        : [undertabell rad | rad <- avstandsTabell k noenVinkler klasse]
-    )
-
--- | Én undertabell for ett tidsrom: grensen i bildeteksten, vinkel → avstand.
-undertabell :: AvstandsRad -> View Model Action
-undertabell rad =
-  H.table_
-    []
-    [ H.thead_
-        []
-        [ H.tr_
-            []
-            [ H.th_ [] [text (tidsromNavn (arTidsrom rad) <> " · " <> visDb (arGrense rad))],
-              H.th_ [] [text "Avstand"]
+    avstandChips =
+      [chip (tidsromKort t) (visMeter (avstand k v (grense klasse t))) | t <- [Dag, Kveld, Natt]]
+    kabinettChip = case mr of
+      Nothing -> chip "Kabinett for natt" "–"
+      Just r ->
+        chip
+          ("Kabinett for natt v/ " <> visMeter r)
+          (desimal (paakrevdDemping k v r nattG) <> " dB")
+    forklaring = case mr of
+      Nothing -> [text "Oppgi en avstand til naboen for å se nivå og kabinettbehov."]
+      Just r ->
+        let nivaa = lydnivaa k v r
+            oppfylt = nivaa <= nattG
+            kab = kabinett m
+            klOffset = klasseOffset klasse
+         in [ text ("Ved " <> visMeter r <> " er nivået ca. " <> visNivaa nivaa <> ". Nattgrensen (" <> visGrense nattG <> ") er "),
+              H.strong_
+                [P.class_ (if oppfylt then "ok" else "for-hoyt")]
+                [text (if oppfylt then "oppfylt" else "ikke oppfylt")],
+              text (kabinettSetning oppfylt kab <> offsetSetning klOffset)
             ]
-        ],
-      H.tbody_
-        []
-        [ H.tr_
-            []
-            [ H.td_ [] [text (vinkelGrad v)],
-              H.td_ [] [text (visMeter r)]
-            ]
-        | (v, r) <- arCeller rad
-        ]
-    ]
+    kabinettSetning oppfylt kab
+      | oppfylt && kab > 0 = " — kabinettet på " <> desimal kab <> " dB holder. "
+      | oppfylt = ". "
+      | otherwise = " — øk avstand eller kabinett. "
+    offsetSetning klOffset
+      | klOffset > 0 = ms (show (round klOffset :: Int)) <> " dB under minstekrav (Klasse C) i alle tidsrom."
+      | otherwise = "Dette er minstekravet (Klasse C)."
