@@ -20,6 +20,7 @@ data Model = Model
     _kabinettTekst :: MisoString,
     _vinkelValg :: Vinkel,
     _valgtKlasse :: Lydklasse,
+    _valgtTidsrom :: Tidsrom,
     _avstandTekst :: MisoString
   }
   deriving (Eq)
@@ -39,6 +40,9 @@ vinkelValg = lens _vinkelValg $ \r f -> r {_vinkelValg = f}
 valgtKlasse :: Lens Model Lydklasse
 valgtKlasse = lens _valgtKlasse $ \r f -> r {_valgtKlasse = f}
 
+valgtTidsrom :: Lens Model Tidsrom
+valgtTidsrom = lens _valgtTidsrom $ \r f -> r {_valgtTidsrom = f}
+
 avstandTekst :: Lens Model MisoString
 avstandTekst = lens _avstandTekst $ \r f -> r {_avstandTekst = f}
 
@@ -48,6 +52,7 @@ data Action
   | SettKabinett MisoString
   | SettVinkel MisoString
   | SettKlasse Lydklasse
+  | VelgCelle Lydklasse Tidsrom
   | SettAvstand MisoString
   deriving (Eq)
 
@@ -113,6 +118,7 @@ startModel =
       _kabinettTekst = "0",
       _vinkelValg = startVinkel,
       _valgtKlasse = KlasseB,
+      _valgtTidsrom = Kveld,
       _avstandTekst = "5"
     }
 
@@ -126,6 +132,7 @@ updateModel = \case
     Just v -> vinkelValg .= v
     Nothing -> pure ()
   SettKlasse k -> valgtKlasse .= k
+  VelgCelle k t -> valgtKlasse .= k >> valgtTidsrom .= t
   SettAvstand s -> avstandTekst .= s
 
 -- Hjelpere ---------------------------------------------------------------
@@ -158,7 +165,7 @@ naboAvstand m = case parseDouble (m ^. avstandTekst) of
   Just r | r > 0 -> Just (Meter r)
   _ -> Nothing
 
--- | Effektivt nivå mot naboen ved 1 m: effektivt kildenivå (inkl. vegg og
+-- | Effektivt kildenivå mot naboen ved 1 m: effektivt kildenivå (vegg og
 -- kabinett) minus retningskorreksjonen for den valgte vinkelen.
 effektivtMotNabo :: Kilde -> Vinkel -> Desibel
 effektivtMotNabo k v =
@@ -253,84 +260,112 @@ viewModel _ m =
         ]
     ]
 
--- | Kompakt inndata-rad: nivå, vegg, kabinett, vinkel, avstand, og effektivt
--- nivå mot naboen.
+-- | Inndata i to seksjoner: «Lydkilde» (nivå, vegg, kabinett → effektivt
+-- kildenivå) og «Nabo» (avstand, vinkel) — geometrien matrisen bruker.
 inndataPanel :: Model -> View Model Action
 inndataPanel m =
   H.section_
     [P.class_ "panel inndata"]
     [ H.div_
-        [P.class_ "felt"]
-        [ H.label_ [P.for_ "nivaa"] [text "Lydnivå 1 m (dBA)"],
-          H.input_
-            [ P.id_ "nivaa",
-              P.type_ "number",
-              P.min_ "40",
-              P.max_ "70",
-              P.step_ "1",
-              P.value_ (m ^. nivaaTekst),
-              E.onInput SettNivaa
-            ]
-        ],
-      H.div_
-        [P.class_ "felt"]
-        [ H.label_
-            [P.class_ "sjekk"]
-            [ H.input_
-                [ P.type_ "checkbox",
-                  P.checked_ (m ^. monteringValg == Veggmontert),
-                  E.onChecked SettVeggmontert
+        [P.class_ "seksjon"]
+        [ H.h3_ [P.class_ "seksjon-tittel"] [text "Lydkilde"],
+          H.div_
+            [P.class_ "felter"]
+            [ felt "nivaa" "Lydnivå 1 m (dBA)" $
+                H.input_
+                  [ P.id_ "nivaa",
+                    P.type_ "number",
+                    P.min_ "40",
+                    P.max_ "70",
+                    P.step_ "1",
+                    P.value_ (m ^. nivaaTekst),
+                    E.onInput SettNivaa
+                  ],
+              H.div_
+                [P.class_ "felt"]
+                [ H.label_
+                    [P.class_ "sjekk"]
+                    [ H.input_
+                        [ P.type_ "checkbox",
+                          P.checked_ (m ^. monteringValg == Veggmontert),
+                          E.onChecked SettVeggmontert
+                        ],
+                      text " +3 dB vegg"
+                    ]
                 ],
-              text " +3 dB vegg"
+              felt "kabinett" "Kabinett (dB)" $
+                H.input_
+                  [ P.id_ "kabinett",
+                    P.type_ "number",
+                    P.min_ "0",
+                    P.step_ "1",
+                    P.value_ (m ^. kabinettTekst),
+                    E.onInput SettKabinett
+                  ]
+            ],
+          H.div_
+            [P.class_ "effektivt"]
+            [ H.span_ [P.class_ "hint"]
+                [ text
+                    ( "Effektivt kildenivå: "
+                        <> maybe "–" (visNivaa . effektivtKildenivaa) (kilde m)
+                    )
+                ]
             ]
         ],
       H.div_
-        [P.class_ "felt"]
-        [ H.label_ [P.for_ "kabinett"] [text "Kabinett (dB)"],
-          H.input_
-            [ P.id_ "kabinett",
-              P.type_ "number",
-              P.min_ "0",
-              P.step_ "1",
-              P.value_ (m ^. kabinettTekst),
-              E.onInput SettKabinett
+        [P.class_ "seksjon"]
+        [ H.h3_ [P.class_ "seksjon-tittel"] [text "Nabo"],
+          H.div_
+            [P.class_ "felter"]
+            [ felt "avstand" "Avstand (m)" $
+                H.input_
+                  [ P.id_ "avstand",
+                    P.type_ "number",
+                    P.min_ "0.5",
+                    P.step_ "0.5",
+                    P.value_ (m ^. avstandTekst),
+                    E.onInput SettAvstand
+                  ],
+              H.div_
+                [P.class_ "felt vinkelfelt"]
+                [ H.label_ [P.for_ "vinkel"] [text ("Vinkel · " <> visVinkelDemping (m ^. vinkelValg))],
+                  H.input_
+                    [ P.id_ "vinkel",
+                      P.type_ "range",
+                      P.min_ "0",
+                      P.max_ "90",
+                      P.step_ "1",
+                      P.value_ (ms (show (round (grader (m ^. vinkelValg)) :: Int))),
+                      E.onInput SettVinkel
+                    ]
+                ]
             ]
         ],
-      H.div_
-        [P.class_ "felt vinkelfelt"]
-        [ H.label_ [P.for_ "vinkel"] [text ("Vinkel · " <> visVinkelDemping (m ^. vinkelValg))],
-          H.input_
-            [ P.id_ "vinkel",
-              P.type_ "range",
-              P.min_ "0",
-              P.max_ "90",
-              P.step_ "1",
-              P.value_ (ms (show (round (grader (m ^. vinkelValg)) :: Int))),
-              E.onInput SettVinkel
-            ]
-        ],
-      H.div_
-        [P.class_ "felt"]
-        [ H.label_ [P.for_ "avstand"] [text "Avstand nabo (m)"],
-          H.input_
-            [ P.id_ "avstand",
-              P.type_ "number",
-              P.min_ "0.5",
-              P.step_ "0.5",
-              P.value_ (m ^. avstandTekst),
-              E.onInput SettAvstand
-            ]
-        ],
-      H.div_
-        [P.class_ "felt effektivt"]
-        [ H.span_ [P.class_ "hint"]
-            [ text
-                ( "Effektivt: "
-                    <> maybe "–" (\k -> visNivaa (effektivtMotNabo k (m ^. vinkelValg))) (kilde m)
-                )
-            ]
-        ]
+      -- Linje på tvers av begge seksjoner: kildenivå justert for vinkel.
+      -- Dette nivået ved 1 m er det matrisen regner avstandene ut fra.
+      H.div_ [P.class_ "samlet"] samletInnhold
     ]
+  where
+    felt feltId etikett inp =
+      H.div_ [P.class_ "felt"] [H.label_ [P.for_ feltId] [text etikett], inp]
+    samletInnhold = case kilde m of
+      Nothing -> [H.span_ [P.class_ "hint"] [text "–"]]
+      Just k ->
+        let v = m ^. vinkelValg
+         in [ H.strong_ [] [text ("Effektivt kildenivå inkl. vinkel: " <> visNivaa (effektivtMotNabo k v))],
+              H.span_
+                [P.class_ "hint"]
+                [ text
+                    ( visNivaa (effektivtKildenivaa k)
+                        <> " − "
+                        <> desimal (vinkelkorreksjon v)
+                        <> " dB retningsdemping ved "
+                        <> visVinkel v
+                        <> ". Matrisen regner avstandene ut fra dette nivået."
+                    )
+                ]
+            ]
 
 -- | Rutenett: 4 lydklasser (rader) × 3 tidsrom (kolonner). Hver celle viser
 -- grenseverdi og nødvendig avstand, fargelagt etter strenghet, med en hake
@@ -347,29 +382,44 @@ rutenettPanel m k =
   where
     v = m ^. vinkelValg
     mr = naboAvstand m
-    valgt = m ^. valgtKlasse
+    valgtK = m ^. valgtKlasse
+    valgtT = m ^. valgtTidsrom
+    -- Grensen i den valgte cellen; alle celler med samme grense rammes inn.
+    valgtGrense = grense valgtK valgtT
     hodeceller =
       H.div_ [P.class_ "kolonnehode hjorne"] []
         : [H.div_ [P.class_ "kolonnehode"] [text (tidsromKort t)] | t <- [Dag, Kveld, Natt]]
     klasseCeller klasse = etikett : [celle t | t <- [Dag, Kveld, Natt]]
       where
-        velg = if klasse == valgt then " valgt" else ""
         etikett =
           H.div_
-            [P.class_ ("klassecelle" <> velg), E.onClick (SettKlasse klasse)]
+            [ P.class_ ("klassecelle" <> if klasse == valgtK then " valgt" else ""),
+              E.onClick (SettKlasse klasse)
+            ]
             [ H.span_ [P.class_ "knavn"] [text (klasseNavn klasse)],
               H.span_ [P.class_ "kundertittel"] [text (klasseUndertittel klasse)]
             ]
         celle t =
           let g = grense klasse t
               d = avstand k v g
-              oppfylt = maybe False (\r -> lydnivaa k v r <= g) mr
+              -- Status mot naboavstanden: innenfor → hake, utenfor → kryss.
+              naboStatus = fmap (\r -> lydnivaa k v r <= g) mr
+              samme = if g == valgtGrense then " samme" else ""
+              valgtCelle = if klasse == valgtK && t == valgtT then " valgt-celle" else ""
            in H.div_
-                [P.class_ ("celle " <> heatKlasse g <> velg), E.onClick (SettKlasse klasse)]
+                [ P.class_ ("celle " <> heatKlasse g <> samme <> valgtCelle),
+                  E.onClick (VelgCelle klasse t)
+                ]
                 [ H.span_ [P.class_ "grense"] [text (visGrense g)],
                   H.span_ [P.class_ "cavstand"] [text (visMeter d)],
-                  if oppfylt then H.span_ [P.class_ "hake"] [text "✓"] else text ""
+                  statusMerke naboStatus
                 ]
+
+    -- Hake (innenfor) / kryss (utenfor) / ingenting (ingen avstand oppgitt).
+    statusMerke naboStatus = case naboStatus of
+      Just True -> H.span_ [P.class_ "hake ok"] [text "✓"]
+      Just False -> H.span_ [P.class_ "hake feil"] [text "✗"]
+      Nothing -> text ""
 
 -- | Notat om −5 dB-gitteret: A dag = B kveld = C natt (alle 35 dB(A)).
 likhetNotat :: Model -> Kilde -> View Model Action
@@ -419,14 +469,30 @@ detaljPanel m k =
         [ H.span_ [P.class_ "chip-etikett"] [text etikett],
           H.span_ [P.class_ "chip-verdi"] [text verdi]
         ]
+    -- Chip med tooltip: ⓘ-ikon i etiketten, forklaring vises ved hover.
+    chipMedTip etikett verdi tip =
+      H.div_
+        [P.class_ "chip tip"]
+        [ H.span_
+            [P.class_ "chip-etikett"]
+            [text etikett, H.span_ [P.class_ "info"] [text "ⓘ"]],
+          H.span_ [P.class_ "chip-verdi"] [text verdi],
+          H.span_ [P.class_ "tip-tekst"] [text tip]
+        ]
     avstandChips =
       [chip (tidsromKort t) (visMeter (avstand k v (grense klasse t))) | t <- [Dag, Kveld, Natt]]
+    kabinettTip =
+      "Demping (dB) utedelen trenger for at nattgrensen ("
+        <> visGrense nattG
+        <> ") akkurat er oppfylt ved naboavstanden. Regnes uten dagens kabinett; "
+        <> "0 dB betyr at grensen alt holder."
     kabinettChip = case mr of
-      Nothing -> chip "Kabinett for natt" "–"
+      Nothing -> chipMedTip "Kabinettbehov natt" "–" kabinettTip
       Just r ->
-        chip
-          ("Kabinett for natt v/ " <> visMeter r)
+        chipMedTip
+          ("Kabinettbehov natt v/ " <> visMeter r)
           (desimal (paakrevdDemping k v r nattG) <> " dB")
+          kabinettTip
     forklaring = case mr of
       Nothing -> [text "Oppgi en avstand til naboen for å se nivå og kabinettbehov."]
       Just r ->
