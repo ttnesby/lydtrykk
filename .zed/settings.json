@@ -1,0 +1,47 @@
+{
+  "file_scan_exclusions": [
+    "**/.git",
+    "**/.svn",
+    "**/.hg",
+    "**/.jj",
+    "**/CVS",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/.classpath",
+    "**/.settings",
+    "**/dist",
+    "**/dist-*",
+    "**/dist-newstyle",
+    "**/.hie",
+    "**/.haskell-language-server",
+    "**/.stack-work",
+    "**/.direnv"
+  ],
+  "languages": {
+    "Haskell": {
+      "tab_size": 2,
+      "format_on_save": "off",
+      "formatter": "language_server"
+    },
+    "Cabal": {
+      "format_on_save": "on",
+      "formatter": "language_server"
+    }
+  },
+  "lsp": {
+    "hls": {
+      "binary": {
+        "path": "haskell-language-server-wrapper",
+        "arguments": [
+          "--lsp"
+        ]
+      },
+      "initialization_options": {
+        "haskell": {
+          "formattingProvider": "ormolu",
+          "cabalFormattingProvider": "cabal-fmt"
+        }
+      }
+    }
+  }
+}
