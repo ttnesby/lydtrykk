@@ -10,8 +10,16 @@
   *{ box-sizing:border-box; }
   html,body{ margin:0; height:100%; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
   #wrap{ display:flex; height:100%; }
-  #side{ width:360px; min-width:360px; height:100%; overflow-y:auto; border-right:1px solid var(--line); background:var(--panel); padding:18px 18px 40px; }
-  #map{ flex:1; height:100%; position:relative; }
+  #side{ width:400px; flex:0 0 auto; height:100%; overflow-y:auto; background:var(--panel); padding:18px 18px 40px; }
+  #map{ flex:1; min-width:0; height:100%; position:relative; }
+  /* dra-skille mellom panel og kart (justerbar bredde) */
+  #divider{ flex:0 0 6px; cursor:col-resize; background:var(--line); position:relative; touch-action:none; }
+  #divider:hover, #divider.dragging{ background:var(--accent); }
+  body.side-collapsed #side, body.side-collapsed #divider{ display:none; }
+  /* topplinje i panelet med lukkeknapp */
+  .side-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+  .side-close{ flex:0 0 auto; width:28px; height:28px; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; font-size:15px; line-height:1; color:var(--ink); }
+  .side-close:hover{ background:#f3f1ea; }
   h1{ font-size:18px; font-weight:600; margin:0 0 4px; }
   .sub{ font-size:12.5px; color:var(--muted); line-height:1.5; margin:0 0 16px; }
   .grp{ border-top:1px solid var(--line); padding:14px 0; }
@@ -39,7 +47,9 @@
   /* modell-tooltip i ingressen */
   .tag{ display:inline-block; font-size:11px; padding:1px 7px; border-radius:10px; background:#eceae2; color:var(--muted); }
   .modell{ position:relative; cursor:help; border-bottom:1px dotted var(--muted); outline:none; }
-  .modell-tip{ display:none; position:absolute; left:0; top:150%; z-index:1200; width:252px; background:var(--ink); color:#fff; border-radius:8px; padding:10px 12px; font-size:11.5px; line-height:1.5; font-weight:400; text-transform:none; letter-spacing:0; box-shadow:0 6px 18px rgba(0,0,0,.25); }
+  /* position:fixed → tooltipen klippes ikke av panelets overflow, og JS plasserer
+     den ved taggen (se placeModellTip). */
+  .modell-tip{ display:none; position:fixed; left:0; top:0; z-index:1200; width:252px; background:var(--ink); color:#fff; border-radius:8px; padding:10px 12px; font-size:11.5px; line-height:1.5; font-weight:400; text-transform:none; letter-spacing:0; box-shadow:0 6px 18px rgba(0,0,0,.25); }
   .modell:hover .modell-tip, .modell:focus .modell-tip, .modell:focus-within .modell-tip{ display:block; }
   .modell-tip .mhd{ display:block; font-weight:600; color:#cfe3ff; margin:7px 0 2px; }
   .modell-tip .mhd:first-child{ margin-top:0; }
@@ -72,15 +82,18 @@
   .leaflet-tooltip.nbtt{ background:transparent;border:0;box-shadow:none;padding:0;font-weight:600; }
   .nbpill{ display:inline-block;font-size:11px;padding:2px 7px;border-radius:9px;border:1px solid #fff;color:#fff;white-space:nowrap;font-variant-numeric:tabular-nums; }
   .leaflet-container{ background:#e8e6df; }
-  #toggle-sidebar{ display:none; position:fixed; bottom:12px; left:12px; z-index:1000; width:40px; height:40px; padding:0; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; font-size:20px; color:var(--ink); line-height:1; box-shadow:0 2px 6px rgba(0,0,0,0.15); }
+  /* Flytende åpne-knapp (☰) – vises bare når panelet er skjult/lukket. */
+  #toggle-sidebar{ display:none; position:fixed; top:12px; left:56px; z-index:1000; width:40px; height:40px; padding:0; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; font-size:20px; color:var(--ink); line-height:1; box-shadow:0 2px 6px rgba(0,0,0,0.15); }
   #toggle-sidebar:hover{ background:#f3f1ea; }
-  /* Mobile layout */
+  body.side-collapsed #toggle-sidebar{ display:block; }
+  /* Mobile layout: panelet ligger over kartet og skyves inn/ut. */
   @media (max-width:768px){
     #wrap{ flex-direction:column; }
+    #divider{ display:none; }
     #side{
       position:fixed;
       top:0;
-      left:-100%;
+      left:0;
       width:100%;
       max-width:360px;
       height:100%;
@@ -89,12 +102,11 @@
       border-right:1px solid var(--line);
       box-shadow:-2px 0 8px rgba(0,0,0,0.15);
     }
-    #side.open{ left:0; }
-    #toggle-sidebar{ display:block; }
+    body.side-collapsed #side{ left:-100%; display:block; }   /* skjult = skjøvet ut (ikke display:none, så animasjonen virker) */
     #map{ width:100%; height:100%; }
   }
   @media (max-width:480px){
-    #side{ max-width:100%; left:-100%; }
+    #side{ max-width:100%; }
     h1{ font-size:16px; }
     .sub{ font-size:11px; }
     input[type=range], .btn{ font-size:13px; }
@@ -104,7 +116,10 @@
 <body>
 <div id="wrap">
   <div id="side">
-    <h1>Varmepumpe – lydnivåsoner</h1>
+    <div class="side-head">
+      <h1>Varmepumpe – lydnivåsoner</h1>
+      <button id="side-close" class="side-close" title="Skjul panel" aria-label="Skjul panel">‹</button>
+    </div>
     <p class="sub">Klikk i kartet for å plassere en utedel eller en nabo. Halvbuene viser hvor langt fra pumpa hvert lydnivå-krav nås. Nabopunktene viser <b>samlet</b> lydnivå fra alle utedeler. Modell:
       <span class="tag modell" tabindex="0" role="button" aria-label="Typiske lydnivåer for ulike modeller">Multi Nordic 2M60S4 ⓘ<span class="modell-tip">
         <span class="mhd">Multi Nordic 2M60S4 · dB(A) @ 1 m</span>
@@ -179,8 +194,9 @@
       • Modellen er en punktkilde i fritt felt; refleksjoner og bakgrunnslyd i tett bebyggelse kan gjøre virkeligheten verre, ikke bedre.</p>
     </div>
   </div>
+  <div id="divider" title="Dra for å justere bredden"></div>
   <div id="map">
-    <button id="toggle-sidebar" aria-label="Toggle sidebar">☰</button>
+    <button id="toggle-sidebar" aria-label="Vis panel">☰</button>
   </div>
 </div>
 
@@ -189,18 +205,44 @@
 // Mobile sidebar toggle
 const toggleBtn=document.getElementById('toggle-sidebar');
 const sideBar=document.getElementById('side');
-const wrap=document.getElementById('wrap');
+const closeBtn=document.getElementById('side-close');
+const divider=document.getElementById('divider');
 
-toggleBtn.addEventListener('click',()=>{ sideBar.classList.toggle('open'); });
-
-// Close sidebar when clicking outside of it on mobile
+function isMobile(){ return window.innerWidth<=768; }
+function setCollapsed(c){
+  document.body.classList.toggle('side-collapsed', c);
+  if(!isMobile()) setTimeout(()=>{ try{ map.invalidateSize(); }catch(_){} },260);
+}
+toggleBtn.addEventListener('click',()=>setCollapsed(false));   // ☰ viser panelet
+closeBtn.addEventListener('click',()=>setCollapsed(true));     // ‹ skjuler panelet
+// Lukk ved klikk utenfor panelet på mobil
 document.addEventListener('click',(e)=>{
-  if(window.innerWidth<=768 && sideBar.classList.contains('open')){
-    if(!sideBar.contains(e.target) && !toggleBtn.contains(e.target)){
-      sideBar.classList.remove('open');
-    }
+  if(isMobile() && !document.body.classList.contains('side-collapsed')
+     && !sideBar.contains(e.target) && !toggleBtn.contains(e.target)){
+    setCollapsed(true);
   }
 });
+if(isMobile()) document.body.classList.add('side-collapsed');   // start skjult på mobil
+window.addEventListener('resize',()=>{ try{ map.invalidateSize(); }catch(_){} });
+
+// Justerbar panelbredde (dra-skille mellom panel og kart)
+let dragId=null;
+divider.addEventListener('pointerdown',e=>{ dragId=e.pointerId; divider.setPointerCapture(dragId); divider.classList.add('dragging'); document.body.style.userSelect='none'; });
+divider.addEventListener('pointermove',e=>{ if(dragId===null)return; sideBar.style.width=Math.max(300,Math.min(680,e.clientX))+'px'; });
+function endDrag(){ if(dragId===null)return; dragId=null; divider.classList.remove('dragging'); document.body.style.userSelect=''; try{ map.invalidateSize(); }catch(_){} }
+divider.addEventListener('pointerup',endDrag);
+divider.addEventListener('pointercancel',endDrag);
+
+// Modell-tooltip (position:fixed → plasseres ved taggen, klippes ikke av panelet)
+const modellTag=document.querySelector('.modell'), modellTip=document.querySelector('.modell-tip');
+function placeModellTip(){
+  const r=modellTag.getBoundingClientRect(), w=252;
+  const left=Math.max(8, Math.min(r.left, window.innerWidth-w-8));
+  const top=Math.max(8, Math.min(r.bottom+6, window.innerHeight-8-(modellTip.offsetHeight||246)));
+  modellTip.style.left=left+'px'; modellTip.style.top=top+'px';
+}
+modellTag.addEventListener('mouseenter',placeModellTip);
+modellTag.addEventListener('focus',placeModellTip);
 
 const CENTER=[59.6502276,10.8092635], MARKER=[59.6499609,10.809443];
 
