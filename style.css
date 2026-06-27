@@ -237,10 +237,18 @@ input[type="checkbox"] {
 
 .hake {
   position: absolute;
-  top: 0.25rem;
-  right: 0.4rem;
-  font-size: 0.8rem;
+  top: 0.22rem;
+  right: 0.32rem;
+  width: 1.05rem;
+  height: 1.05rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
   font-weight: 700;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 0 1px rgb(0 0 0 / 30%);
 }
 
 .hake.ok {
@@ -272,16 +280,18 @@ input[type="checkbox"] {
   box-shadow: inset 0 0 0 3px rgb(255 209 102 / 30%);
 }
 
-/* Heatmap: høyere grense (mildere) = mørkere blå; lavere (strengere) = lysere.
-   Diagonalen A dag = B kveld = C natt (alle 35) deler dermed samme tone. */
-.h25 { background: #d8e8f7; color: #0b2540; }
-.h28 { background: #b9d4ee; color: #0b2540; }
-.h30 { background: #99c0e4; color: #0b2540; }
-.h33 { background: #6fa3d6; color: #08203a; }
-.h35 { background: #4d8bca; color: #fff; }
-.h38 { background: #356fb4; color: #fff; }
-.h40 { background: #235696; color: #fff; }
-.h45 { background: #163d72; color: #fff; }
+/* Heatmap: én tydelig farge per dB-grense, ordnet streng→mild – samme palett som
+   kart-simulatoren. Varm/rød = lav dB = streng = lengst avstand; kjølig→grønn =
+   mildere, og blått er strengere enn grønt. Diagonalen A dag = B kveld = C natt
+   (alle 35) deler dermed samme farge. */
+.h25 { background: #dc2626; color: #fff; }
+.h28 { background: #ea580c; color: #fff; }
+.h30 { background: #d97706; color: #fff; }
+.h33 { background: #ca8a04; color: #fff; }
+.h35 { background: #2563eb; color: #fff; }
+.h38 { background: #0891b2; color: #fff; }
+.h40 { background: #059669; color: #fff; }
+.h45 { background: #65a30d; color: #fff; }
 
 .likhet {
   text-align: center;
@@ -302,7 +312,7 @@ input[type="checkbox"] {
   flex: 1;
   height: 0.5rem;
   border-radius: 999px;
-  background: linear-gradient(90deg, #d8e8f7, #163d72);
+  background: linear-gradient(90deg, #dc2626, #ea580c, #d97706, #ca8a04, #2563eb, #0891b2, #059669, #65a30d);
 }
 
 /* Detaljpanel ------------------------------------------------------------ */
