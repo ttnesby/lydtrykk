@@ -434,7 +434,7 @@ likhetNotat m k =
         )
     ]
 
--- | Fargeforklaring: fra strengere (mørk, lengre avstand) til mildere.
+-- | Fargeforklaring: fra strengere (rød, lengre avstand) til mildere (grønn).
 legende :: View Model Action
 legende =
   H.div_
