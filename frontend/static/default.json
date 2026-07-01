@@ -3,12 +3,12 @@
   "version": 2,
   "savedAt": "2026-06-26T15:31:00.000Z",
   "settings": {
-    "lyd": 46,
+    "lyd": 52,
     "vegg": false,
     "kab": 0,
     "limits": [28, 35, 40, 45],
     "defdir": 180,
-    "base": "kv"
+    "base": "kvg"
   },
   "pumps": [
     { "num": 1, "lat": 59.649914142605965, "lng": 10.809076816990757, "brg": 254 },
