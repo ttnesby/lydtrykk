@@ -119,7 +119,7 @@
       <h1>Varmepumpe – lydnivåsoner</h1>
       <button id="side-close" class="side-close" title="Skjul panel" aria-label="Skjul panel">‹</button>
     </div>
-    <p class="sub">Klikk i kartet for å plassere en utedel. Halvbuene viser hvor langt fra pumpa hvert lydnivå-krav nås for én kilde. Dra de to blå hjørnemarkørene for å sette rutenettets område – rutenettet viser <b>samlet</b> lydnivå fra alle utedeler over hele området, med røde ruter der grensen brytes og fargede linjer som dB-ekvidistanser. Modell:
+    <p class="sub">Klikk i kartet for å plassere en utedel. Dra de to blå hjørnemarkørene for å sette rutenettets område – rutenettet viser <b>samlet</b> lydnivå fra alle utedeler over hele området, med røde ruter der grensen brytes og fargede linjer som dB-ekvidistanser. Skru av rutenettet i panelet for i stedet å se hver utedels egen halvbue. Modell:
       <span class="tag modell" tabindex="0" role="button" aria-label="Typiske lydnivåer for ulike modeller">Multi Nordic 2M60S4 ⓘ<span class="modell-tip">
         <span class="mhd">Multi Nordic 2M60S4 · dB(A) @ 1 m</span>
         <span class="mrow"><span>Maks oppgitt</span><b>50</b></span>
@@ -157,17 +157,20 @@
       <div class="matrise" id="matrise"></div>
       <div class="leglbl"><span>strengere · lengre avstand</span><span>mildere</span></div>
       <div class="leg" id="leg"></div>
-      <p class="note">Klikk en celle for å vise/skjule den halvbuen (per utedel) og ekvidistansen (for hele rutenettet) for det lydnivået. Celler med samme dB(A) henger sammen (A dag = B kveld = C natt). Avstanden er <b>rett foran</b> pumpa; til siden er buen ca. 56 % så lang. Buen tegnes bare foran – bakveggen antas å stå mot egen bolig.</p>
+      <p class="note">Klikk en celle for å vise/skjule ekvidistansen for det lydnivået i rutenettet (eller halvbuen per utedel, når rutenettet er avslått). Celler med samme dB(A) henger sammen (A dag = B kveld = C natt). Avstanden i cellen er en referanse: hvor langt <b>rett foran</b> én enkelt utedel man akkurat når grensen – til siden er avstanden ca. 56 % så lang.</p>
     </div>
 
     <div class="grp">
       <label class="l">Rutenett · ekvidistanser</label>
       <div class="felt">
+        <label class="ck"><input type="checkbox" id="gridOn" checked> Vis rutenett og ekvidistanser</label>
+      </div>
+      <div class="felt">
         <label class="fl" for="gridres">Oppløsning (m)</label>
-        <input type="number" id="gridres" min="0.25" max="5" step="0.25" value="1">
+        <input type="number" id="gridres" min="1" max="5" step="0.5" value="2">
       </div>
       <p class="note" id="gridinfo"></p>
-      <p class="note">De to blå hjørnene i kartet setter rutenettets område (nedre venstre / øvre høyre) – dra dem dit du vil dekke. Kumulativt lydnivå for hver rute regnes i bakgrunnen (en pool av Web Workers, én WASM-instans hver) og oppdateres automatisk når du flytter en utedel, endrer lydkilde eller drar et hjørne.</p>
+      <p class="note">De to blå hjørnene i kartet setter rutenettets område (nedre venstre / øvre høyre) – dra dem dit du vil dekke. Kumulativt lydnivå for hver rute regnes i bakgrunnen (en pool av Web Workers, én WASM-instans hver) og oppdateres automatisk når du flytter en utedel, endrer lydkilde eller drar et hjørne. Avslått viser kartet i stedet hver utedels egen halvbue.</p>
     </div>
 
     <div class="grp">
@@ -274,8 +277,9 @@ L.circleMarker(MARKER,{radius:4,color:'#1d6fb8',weight:2,fillColor:'#1d6fb8',fil
 
 // ---- klassematrise / soner ----
 // Speiler grense-tabellen i Lyd.Beregning (NS 8175). Matrisecellene ER sonevelgeren:
-// klikk en celle for å vise/skjule halvbuen (per pumpe) og ekvidistansen (for
-// rutenettet) for den grensen. Soner nøkles på dB-grensen, så like celler
+// klikk en celle for å vise/skjule ekvidistansen (rutenett) eller halvbuen
+// (per pumpe, når rutenettet er avslått) for den grensen. Soner nøkles på
+// dB-grensen, så like celler
 // (A dag = B kveld = C natt = 35) toggles og highlightes sammen.
 const KLASSER=[
   {k:'A',  navn:'Klasse A',  sub:'streng · frivillig'},
@@ -320,18 +324,6 @@ function reqDist(angleDeg,limit){
   return WASM ? WASM.acoustics_reqDist(srcLevel(),limit,angleDeg)
               : Math.pow(10,(srcLevel()+dirGainJS(angleDeg)-limit)/20);
 }
-function levelAt(p,n){
-  const r=Math.max(map.distance(p.latlng,n.latlng),1);
-  const a=Math.abs(((bearing(p.latlng,n.latlng)-p.brg+540)%360)-180);
-  return WASM ? WASM.acoustics_levelAt(srcLevel(),r,a)
-              : srcLevel()+dirGainJS(a)-20*Math.log10(r);
-}
-function dbSum(levels){
-  if(!levels.length) return null;
-  return WASM ? WASM.acoustics_dbSum(Float64Array.from(levels))
-              : 10*Math.log10(levels.reduce((s,L)=>s+Math.pow(10,L/10),0));
-}
-
 function destPoint(lat,lng,brgDeg,distM){
   const R=6378137, d=distM/R, b=brgDeg*Math.PI/180, f1=lat*Math.PI/180, l1=lng*Math.PI/180;
   const f2=Math.asin(Math.sin(f1)*Math.cos(d)+Math.cos(f1)*Math.sin(d)*Math.cos(b));
@@ -418,19 +410,24 @@ function addPump(latlng,brg,num){
   const zones={}; ALLE_GRENSER.forEach(lim=>{ zones[lim]=L.polygon([],{color:heat(lim),weight:1.5,fillColor:heat(lim),fillOpacity:.10}); });
   const p={id:num,num:num,marker:m,zones:zones,latlng:latlng,brg:brg};
   m.on('click',e=>{L.DomEvent.stop(e);selectPump(p.id);});
-  m.on('drag',e=>{ p.latlng=e.target.getLatLng(); scheduleDraw(p); if(sel===p.id) positionControls(); scheduleGrid(); });
-  m.on('dragend',()=>{ drawPump(p); scheduleGrid(); if(sel===p.id) positionControls(); });
+  m.on('drag',e=>{ interacting=true; p.latlng=e.target.getLatLng(); scheduleDraw(p); if(sel===p.id) positionControls(); scheduleGrid(); });
+  m.on('dragend',()=>{ interacting=false; drawPump(p); scheduleGrid(); if(sel===p.id) positionControls(); });
   pumps.push(p); updateCounts(); selectPump(p.id); drawPump(p); scheduleGrid();
 }
+// Halvbuene (per utedel) vises kun når rutenettet er skrudd av – med
+// rutenettet på ville de bare vært clutter oppå det samlede bildet, og
+// ekvidistansen for én enkelt kilde er uansett identisk med dens egen halvbue.
 function drawPump(p){
   ALLE_GRENSER.forEach(lim=>{
     const z=p.zones[lim];
-    if(activeLimits.has(lim)){
-      const c=heat(lim), erBp=BPLUSS.has(lim);
-      z.setStyle({color:c,fillColor:c,weight:erBp?2.8:2,dashArray:erBp?'8 6':null,fillOpacity:erBp?0:.08});
-      z.setLatLngs(lobePts(p,lim));
-      if(!map.hasLayer(z)) z.addTo(map);
-    } else if(map.hasLayer(z)) map.removeLayer(z);
+    if(gridOn || !activeLimits.has(lim)){
+      if(map.hasLayer(z)) map.removeLayer(z);
+      return;
+    }
+    const c=heat(lim), erBp=BPLUSS.has(lim);
+    z.setStyle({color:c,fillColor:c,weight:erBp?2.8:2,dashArray:erBp?'8 6':null,fillOpacity:erBp?0:.08});
+    z.setLatLngs(lobePts(p,lim));
+    if(!map.hasLayer(z)) z.addTo(map);
   });
 }
 function redrawAll(){ pumps.forEach(drawPump); updateKilde(); renderMatrise(); scheduleGrid(); }
@@ -451,9 +448,17 @@ function removePump(id){
 // fysisk ligger sørvest/nordøst avgjøres på nytt hver gang (effectiveBounds),
 // så det ikke spiller noen rolle om brukeren drar dem forbi hverandre.
 const MAX_CELLS=200000;   // tak på celletall – oppløsningen grovnes automatisk over dette
-let gridRes=1;            // meter mellom celler, justerbar i panelet
+let gridOn=true;          // av/på for rutenett+ekvidistanser (se setGridOn)
+let gridRes=2;            // meter mellom celler, justerbar i panelet
 let corners={sw:null, ne:null};
 let lastGrid=null;        // siste ferdigberegnede rutenett, brukt til rendering
+
+// Mens en pumpe eller et hjørne dras, regnes rutenettet med en grovere
+// oppløsning (raskere, holder tilbakemeldingen jevn under selve draget); ved
+// slipp (dragend) kommer alltid ett siste, fullt oppløst tak. Se
+// gridDims/scheduleGrid og drag/dragend-håndtererne under.
+let interacting=false;
+const DRAG_COARSEN=3;
 
 function metersPerDeg(lat){
   const mPerDegLat=111320;
@@ -478,7 +483,7 @@ function gridDims(){
   const {sw,ne}=effectiveBounds();
   const {x:wRaw,y:hRaw}=toLocal(ne,sw);
   const w=Math.max(wRaw,2), h=Math.max(hRaw,2);
-  let res=gridRes, coarsened=false;
+  let res=gridRes*(interacting?DRAG_COARSEN:1), coarsened=false;
   let cols=Math.max(2,Math.round(w/res)+1), rows=Math.max(2,Math.round(h/res)+1);
   if(cols*rows>MAX_CELLS){
     res=gridRes*Math.sqrt((cols*rows)/MAX_CELLS);
@@ -491,10 +496,10 @@ function gridDims(){
 function hjornIcon(){ return L.divIcon({className:'',iconSize:[14,14],iconAnchor:[7,7],html:'<div class="hjornic"></div>'}); }
 const swMarker=L.marker(CENTER,{icon:hjornIcon(),draggable:true,zIndexOffset:1500});
 const neMarker=L.marker(CENTER,{icon:hjornIcon(),draggable:true,zIndexOffset:1500});
-swMarker.on('drag',()=>{ corners.sw=swMarker.getLatLng(); scheduleGrid(); });
-neMarker.on('drag',()=>{ corners.ne=neMarker.getLatLng(); scheduleGrid(); });
-swMarker.on('dragend',()=>{ scheduleGrid(); });
-neMarker.on('dragend',()=>{ scheduleGrid(); });
+swMarker.on('drag',()=>{ interacting=true; corners.sw=swMarker.getLatLng(); scheduleGrid(); });
+neMarker.on('drag',()=>{ interacting=true; corners.ne=neMarker.getLatLng(); scheduleGrid(); });
+swMarker.on('dragend',()=>{ interacting=false; scheduleGrid(); });
+neMarker.on('dragend',()=>{ interacting=false; scheduleGrid(); });
 
 // Standardplassering: omslutter eksisterende pumper + margin, ellers en fast
 // ~50×50 m-rute rundt CENTER.
@@ -531,8 +536,31 @@ function setupGrid(saved){
   scheduleGrid();
 }
 
+// Av/på for hele rutenett-funksjonen. Av: hjørnene og rutenettets overlay/
+// ekvidistanser fjernes fra kartet, og hver utedel viser igjen sin egen
+// halvbue (som før rutenettet fantes). På: halvbuene skjules igjen (se
+// drawPump) og rutenettet beregnes på nytt.
+function setGridOn(on){
+  gridOn=on;
+  document.getElementById('gridOn').checked=on;
+  document.getElementById('gridres').disabled=!on;
+  if(on){
+    if(!map.hasLayer(swMarker)) swMarker.addTo(map);
+    if(!map.hasLayer(neMarker)) neMarker.addTo(map);
+    pumps.forEach(drawPump);
+    scheduleGrid();
+  } else {
+    if(map.hasLayer(swMarker)) map.removeLayer(swMarker);
+    if(map.hasLayer(neMarker)) map.removeLayer(neMarker);
+    if(overlayLayer){ map.removeLayer(overlayLayer); overlayLayer=null; }
+    Object.values(contourLayers).forEach(l=>map.removeLayer(l)); contourLayers={};
+    document.getElementById('gridinfo').textContent='Rutenett avslått.';
+    pumps.forEach(drawPump);
+  }
+}
+
 // Worker-pool: opprettes én gang og gjenbrukes (ikke ny Worker per beregning).
-const POOL_SIZE=Math.min(4, navigator.hardwareConcurrency||2);
+const POOL_SIZE=Math.min(8, navigator.hardwareConcurrency||2);
 let gridWorkers=[];
 try{ gridWorkers=Array.from({length:POOL_SIZE},()=>new Worker('gridWorker.js',{type:'module'})); }
 catch(e){ console.warn('Kunne ikke starte grid-workere – rutenettet er avslått:',e); }
@@ -578,7 +606,7 @@ async function runGridLoop(){
   gridBusy=false;
 }
 async function recomputeGrid(){
-  if(!corners.sw||!corners.ne) return;
+  if(!gridOn||!corners.sw||!corners.ne) return;
   const {sw,res,cols,rows,coarsened}=gridDims();
   updateGridInfo(cols,rows,res,coarsened);
   const grid=await computeGrid(rows,cols,res,sw);
@@ -734,10 +762,11 @@ const dd=document.getElementById('defdir'); dd.addEventListener('input',()=>docu
 const gridresEl=document.getElementById('gridres');
 gridresEl.addEventListener('change',()=>{
   const v=parseFloat(gridresEl.value);
-  gridRes=Math.min(5,Math.max(0.25, isNaN(v)?1:v));
+  gridRes=Math.min(5,Math.max(1, isNaN(v)?2:v));
   gridresEl.value=gridRes;
   scheduleGrid();
 });
+document.getElementById('gridOn').addEventListener('change',e=>setGridOn(e.target.checked));
 document.getElementById('clear').addEventListener('click',()=>{
   [...pumps].forEach(p=>removePump(p.id));
   pumpNo=0; sel=null; positionControls(); updateCounts();
@@ -757,7 +786,7 @@ function snapshot(){
       base:baseKey,
     },
     pumps:pumps.map(p=>({num:p.num,lat:p.latlng.lat,lng:p.latlng.lng,brg:p.brg})),
-    grid:{ sw:{lat:corners.sw.lat,lng:corners.sw.lng}, ne:{lat:corners.ne.lat,lng:corners.ne.lng}, res:gridRes },
+    grid:{ sw:{lat:corners.sw.lat,lng:corners.sw.lng}, ne:{lat:corners.ne.lat,lng:corners.ne.lng}, res:gridRes, on:gridOn },
     view:{center:[c.lat,c.lng],zoom:map.getZoom()},
   };
 }
@@ -792,6 +821,7 @@ function restore(d){
   sel=null; positionControls();
   // rutenett: eksplisitt lagret (v3), ellers tilpasset pumpene som nettopp ble lastet
   setupGrid(d.grid||null);
+  setGridOn(d.grid&&d.grid.on!=null ? d.grid.on : true);
   // kartutsnitt
   if(d.view&&d.view.center) map.setView(d.view.center,d.view.zoom);
   redrawAll();
