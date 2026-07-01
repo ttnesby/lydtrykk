@@ -293,7 +293,7 @@ inndataPanel m =
                       text " +3 dB vegg"
                     ]
                 ],
-              felt "kabinett" "Kabinett (dB)" $
+              felt "kabinett" "Kabinettdemping (dB)" $
                 H.input_
                   [ P.id_ "kabinett",
                     P.type_ "number",
