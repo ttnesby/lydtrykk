@@ -161,10 +161,11 @@ python3 -m http.server -d dist
 
 ## Deploy
 
-Push til `main` kjører testene, bygger wasm og deployer `dist/` til GitHub
-Pages via `actions/deploy-pages`. Workflowen forsøker selv å aktivere Pages
-(`actions/configure-pages` med `enablement: true`); hvis det feiler, slå på
-GitHub Pages med «GitHub Actions» som source under Settings → Pages.
+Push til `main` kjører native tester og wasm-bygg parallelt, og deployer
+`dist/` til roten av `gh-pages`-branchen når begge er grønne. Åpne PR-er får
+en preview under `gh-pages/pr-preview/pr-<N>/`, og preview-mappa ryddes når
+PR-en lukkes. Pages-kilden må derfor stå på «Deploy from a branch →
+gh-pages / (root)» i repo-innstillingene.
 
 ### Hoppe over deploy for trivielle endringer
 
@@ -177,5 +178,6 @@ hoppe over hele workflow-kjøringen ved å ta med en av disse i commit-meldingen
 ```
 
 Dette gjelder kun `push`/`pull_request` — manuell kjøring via «Run workflow»
-påvirkes ikke. Standard-oppsettet (`default.json`) hoppes over automatisk via
-`paths-ignore` og trenger derfor ingen slik markør.
+påvirkes ikke. Rene endringer i dokumentasjon, `LICENSE` og standard-oppsettet
+(`default.json`) hoppes over automatisk via `paths-ignore` og trenger derfor
+ingen slik markør.

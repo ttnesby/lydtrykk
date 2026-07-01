@@ -17,8 +17,14 @@ on:
     branches: [main]
     paths-ignore:
       - 'frontend/static/default.json'
+      - '**/*.md'
+      - 'LICENSE'
   pull_request:
     types: [opened, synchronize, reopened, closed]
+    paths-ignore:
+      - 'frontend/static/default.json'
+      - '**/*.md'
+      - 'LICENSE'
   workflow_dispatch:
 
 permissions:
@@ -27,7 +33,7 @@ permissions:
 
 concurrency:
   group: deploy-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -57,19 +63,27 @@ jobs:
         run: cabal test all
 
   build:
-    needs: test
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache ghc-wasm-meta toolchain + wasm cabal store
+      - name: Cache ghc-wasm-meta toolchain
+        id: wasm-toolchain-cache
         uses: actions/cache@v4
         with:
           path: ~/.ghc-wasm
-          key: ghc-wasm-9.12-${{ runner.os }}-${{ hashFiles('cabal.project.wasm', 'frontend/frontend.cabal', 'lyd-core/lyd-core.cabal') }}
+          key: ghc-wasm-9.12-${{ runner.os }}
           restore-keys: |
             ghc-wasm-9.12-${{ runner.os }}-
+
+      - name: Cache wasm build products
+        uses: actions/cache@v4
+        with:
+          path: dist-newstyle
+          key: wasm-build-${{ runner.os }}-${{ hashFiles('cabal.project.wasm', 'frontend/frontend.cabal', 'lyd-core/lyd-core.cabal') }}
+          restore-keys: |
+            wasm-build-${{ runner.os }}-
 
       - name: Install ghc-wasm-meta (GHC 9.12 flavour)
         run: |
@@ -79,6 +93,9 @@ jobs:
           fi
 
       - name: Build wasm frontend
+        env:
+          SKIP_CABAL_UPDATE: ${{ steps.wasm-toolchain-cache.outputs.cache-hit == 'true' && '1' || '0' }}
+          WASM_OPT: ${{ github.event_name == 'pull_request' && '0' || '1' }}
         run: ./build.sh
 
       - name: Upload dist artifact
@@ -90,7 +107,7 @@ jobs:
   # Produksjon: push til main → gh-pages-roten. Beholder eksisterende
   # PR-previews (clean-exclude).
   deploy-main:
-    needs: build
+    needs: [test, build]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     concurrency:
@@ -116,7 +133,7 @@ jobs:
   # PR-preview: bygg/oppdater preview i gh-pages/pr-preview/pr-N/ og kommenter
   # PR-en med URL.
   deploy-preview:
-    needs: build
+    needs: [test, build]
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     runs-on: ubuntu-latest
     concurrency:
