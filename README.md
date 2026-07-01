@@ -10,47 +10,63 @@ og GHC sin WASM-backend. Ingen backend — kun statiske filer.
 ## Hva den gjør
 
 Regner begge veier mellom lydtrykknivå og avstand, mot grenseverdiene i
-NS 8175 (LAFmax på uteoppholdsareal):
+NS 8175 (LAFmax på uteoppholdsareal), for fire lydklasser fra strengest
+(A) til minstekrav (C):
 
-| Tidsrom      | Klasse C | Klasse B |
-|--------------|----------|----------|
-| Dag (07–19)  | 45 dBA   | 40 dBA   |
-| Kveld (19–23)| 40 dBA   | 35 dBA   |
-| Natt (23–07) | 35 dBA   | 30 dBA   |
+| Tidsrom       | Klasse A | Klasse B+ | Klasse B | Klasse C |
+|---------------|----------|-----------|----------|----------|
+| Dag (07–19)   | 35 dBA   | 38 dBA    | 40 dBA   | 45 dBA   |
+| Kveld (19–23) | 30 dBA   | 33 dBA    | 35 dBA   | 40 dBA   |
+| Natt (23–07)  | 25 dBA   | 28 dBA    | 30 dBA   | 35 dBA   |
+
+Klasse B+ er en mellomklasse (7 dBA strengere enn minstekravet C); de
+andre offsettene er A = 10 dBA og B = 5 dBA strengere enn C.
 
 - **Modus A**: nødvendig minsteavstand per tidsrom, inkl. scenario med
   nattavslag (pumpen av kl. 23–07 ⇒ kveldsgrensen dimensjonerer).
 - **Modus B**: beregnet lydnivå ved gitt avstand, med innenfor/utenfor-status
   per tidsrom.
-- **Modus C**: avstandstabell for et fast vinkelsett, klasse C og B side om
+- **Modus C**: avstandstabell for et fast vinkelsett, alle fire klasser side om
   side, én undertabell per tidsrom.
 
 ## Simulator (lydnivåsoner på kart)
 
-`lydnivakart.html` er en Leaflet-basert simulator. Den er **ikke lenket** fra
-hovedsiden — siden er upublisert og nås bare via direkte URL
-(`…/lydnivakart.html`):
+`lydnivakart.html` er en Leaflet-basert kart-simulator, lenket fra kalkulatoren
+(«enkel simulator på kart») og nås også direkte via `…/lydnivakart.html`:
 
-- Klikk i kartet for å plassere **utedeler** og **naboer**. Utedeler kan dras
-  og roteres (hvitt håndtak), og bakgrunnskart byttes (Kartverket gråtone som
-  standard, topo, flyfoto, OSM).
-- Hver utedel tegner **halvbuer foran pumpa** der hvert lydnivå-krav nås
-  (klasse B/C, dag/kveld/natt). Buen er bare foran — bakveggen antas å stå mot
-  egen bolig. Ved oppstart er klasse C dag, kveld og natt avkrysset som standard.
-- Hvert nabopunkt viser **samlet** (logaritmisk summert) lydnivå fra alle
-  utedeler, fargelagt over/under valgt grense.
+- Klikk i kartet for å plassere **utedeler**. De kan dras og roteres (hvitt
+  håndtak), og bakgrunnskart byttes (Kartverket gråtone som standard, topo,
+  flyfoto, OSM). Sidepanelet kan skjules og bredden justeres.
+- **Felles lydkilde**: ett lydnivå-felt (dBA ved 1 m) + veggmontering (+3 dB)
+  + kabinettdemping gjelder alle utedeler.
+- **Klassematrise**: en 4×3-rutenett (klasse × tidsrom) med de åtte distinkte
+  grenseverdiene fra tabellen over. Cellene ER sonevelgeren — klikk for å
+  vise/skjule en grense; celler med samme dB(A) (f.eks. A dag = B kveld =
+  C natt) henger sammen og fargelegges likt.
+- **Rutenett og dB-ekvidistanser**: to draggbare hjørnemarkører setter et
+  rutenett (justerbar oppløsning, 1–5 m, default 2 m) som regner **kumulativt**
+  (logaritmisk summert) lydnivå fra alle utedeler for hver rute — i en pool av
+  Web Workers (`gridWorker.js`, egen WASM-instans hver) for ekte parallell
+  beregning. Ruter over strengeste aktive grense markeres røde, og
+  ekvidistanser (konturlinjer, via en enkel marching-squares-implementasjon)
+  tegnes ved de aktive klassematrise-grensene. Rutenettet kan skrus av i
+  panelet; da vises i stedet hver utedels egen **halvbue** (retningsavhengig
+  rekkevidde for én kilde) for den valgte grensen.
 - **Lagre / last oppsett**: «Lagre til fil» laster ned hele tilstanden som en
-  menneskelesbar JSON-fil i nedlastingsmappa — valgte soner, driftsmodus,
-  montering, standardretning, karttype, alle utedeler (plassering + vinkel),
-  naboer og kartutsnitt. «Last fra fil» setter alt tilbake til lagret tilstand.
+  menneskelesbar JSON-fil i nedlastingsmappa — lydkilde, valgte soner,
+  standardretning, karttype, alle utedeler (plassering + vinkel), rutenettets
+  hjørner/oppløsning/av-på-status og kartutsnitt. «Last fra fil» setter alt
+  tilbake til lagret tilstand, og eldre lagringsformater (inkl. filer med det
+  utgåtte «nabo»-punktet) leses fortsatt inn uten feil.
   (Nettleseren lagrer til nedlastingsmappa; lasting krever at du velger fila i
   filvelgeren — en nettside kan ikke lese mapper på egen hånd.)
 
 Simulatoren deler **samme akustikk-kjerne** (`Lyd.Beregning`) som NS 8175-siden,
 eksponert fra `app.wasm` via synkrone JSFFI-eksporter (`acoustics_dirGain`,
-`acoustics_reqDist`, `acoustics_levelAt`, `acoustics_dbSum`). Tallene kan derfor
-ikke divergere mellom de to sidene. En ren JS-fallback med identisk modell brukes
-dersom WASM ikke lastes.
+`acoustics_reqDist`, `acoustics_levelAt`, `acoustics_dbSum`). Både hovedtråden
+og hver grid-worker instansierer WASM-kjernen via en delt boot-sekvens
+(`wasmInit.js`), så tallene kan ikke divergere. En ren JS-fallback med
+identisk modell brukes dersom WASM ikke lastes noe sted.
 
 ### Oppdatere standard-oppsettet
 
@@ -99,9 +115,18 @@ flere kilder: `ltot = 10·log10(Σ 10^(l/10))`.
 
 - `lyd-core/` — ren domenelogikk, uten Miso-avhengighet. Testes med nativ GHC
   (tasty + QuickCheck, inkl. gylne verdier og rundtur-egenskap).
-- `frontend/` — Miso-app, bygges kun for wasm32-wasi. Inkluderer
-  `static/lydnivakart.html` (kart-simulatoren) og JSFFI-eksportene av
-  akustikk-kjernen til JS.
+- `frontend/` — Miso-app, bygges kun for wasm32-wasi. `app/Main.hs` inneholder
+  både kalkulatoren og JSFFI-eksportene av akustikk-kjernen til JS.
+  `static/` er alt som serveres direkte:
+  - `index.html` — kalkulatoren (Miso monteres inn her).
+  - `lydnivakart.html` — kart-simulatoren (samme `app.wasm`, kjørt i
+    reactor-modus uten `hs_start`).
+  - `gridWorker.js` — Web Worker som regner en rad-stripe av rutenettet;
+    hovedtråden kjører flere av disse parallelt (se «Simulator» over).
+  - `wasmInit.js` — delt WASI-boot, importert av både `lydnivakart.html` og
+    `gridWorker.js`.
+  - `default.json` — standard-oppsettet simulatoren laster ved oppstart
+    (se eget avsnitt under).
 - `build.sh` — wasm-bygg → `dist/` (post-link av JSFFI-glue, wasm-opt -Oz).
 - `.github/workflows/deploy.yml` — test (nativ GHC) → wasm-bygg → GitHub Pages.
 
