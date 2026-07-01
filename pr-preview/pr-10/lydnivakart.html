@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Varmepumpe – lydnivåsoner på kart (NS 8175)</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root{ --ink:#23231f; --muted:#5f5e5a; --line:#e2e0d8; --bg:#faf9f5; --accent:#c0492a; --panel:#ffffff; --ok:#2f7d3a; --bad:#c4362f; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; height:100%; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+  #wrap{ display:flex; height:100%; }
+  #side{ width:400px; flex:0 0 auto; height:100%; overflow-y:auto; background:var(--panel); padding:18px 18px 40px; }
+  #map{ flex:1; min-width:0; height:100%; position:relative; }
+  /* dra-skille mellom panel og kart (justerbar bredde) */
+  #divider{ flex:0 0 6px; cursor:col-resize; background:var(--line); position:relative; touch-action:none; }
+  #divider:hover, #divider.dragging{ background:var(--accent); }
+  body.side-collapsed #side, body.side-collapsed #divider{ display:none; }
+  /* topplinje i panelet med lukkeknapp */
+  .side-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+  .side-close{ flex:0 0 auto; width:28px; height:28px; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; font-size:15px; line-height:1; color:var(--ink); }
+  .side-close:hover{ background:#f3f1ea; }
+  h1{ font-size:18px; font-weight:600; margin:0 0 4px; }
+  .sub{ font-size:12.5px; color:var(--muted); line-height:1.5; margin:0 0 16px; }
+  .grp{ border-top:1px solid var(--line); padding:14px 0; }
+  .grp:first-of-type{ border-top:none; padding-top:6px; }
+  label.l{ display:block; font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin:0 0 7px; }
+  input[type=range]{ width:100%; }
+  input[type=number]{ width:100%; padding:7px 8px; border:1px solid var(--line); border-radius:7px; background:#fff; font-size:13.5px; color:var(--ink); }
+  .seg{ display:flex; gap:6px; }
+  .seg button{ flex:1; padding:7px 4px; border:1px solid var(--line); background:#fff; border-radius:7px; font-size:13px; cursor:pointer; color:var(--ink); }
+  .seg button.on{ background:var(--ink); color:#fff; border-color:var(--ink); }
+  .ck{ display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; }
+  .ck input{ width:15px; height:15px; accent-color:var(--accent); }
+  .row{ display:flex; align-items:center; gap:8px; font-size:13px; }
+  .val{ font-variant-numeric:tabular-nums; font-weight:600; min-width:34px; text-align:right; }
+  .note{ font-size:11.5px; color:var(--muted); line-height:1.55; margin-top:5px; }
+  .btn{ width:100%; padding:9px; border:1px solid var(--line); background:#fff; border-radius:8px; font-size:13px; cursor:pointer; margin-top:8px; color:var(--ink); }
+
+  /* Lydkilde */
+  .felt{ margin-bottom:10px; }
+  .felt:last-child{ margin-bottom:0; }
+  .felt .fl{ display:block; font-size:11.5px; color:var(--muted); margin:0 0 4px; }
+  .eff{ margin-top:11px; background:#f3f1ea; border-radius:8px; padding:9px 11px; font-size:12.5px; }
+  .eff b{ font-variant-numeric:tabular-nums; }
+
+  /* modell-tooltip i ingressen */
+  .tag{ display:inline-block; font-size:11px; padding:1px 7px; border-radius:10px; background:#eceae2; color:var(--muted); }
+  .modell{ position:relative; cursor:help; border-bottom:1px dotted var(--muted); outline:none; }
+  /* position:fixed → tooltipen klippes ikke av panelets overflow, og JS plasserer
+     den ved taggen (se placeModellTip). */
+  .modell-tip{ display:none; position:fixed; left:0; top:0; z-index:1200; width:252px; background:var(--ink); color:#fff; border-radius:8px; padding:10px 12px; font-size:11.5px; line-height:1.5; font-weight:400; text-transform:none; letter-spacing:0; box-shadow:0 6px 18px rgba(0,0,0,.25); }
+  .modell:hover .modell-tip, .modell:focus .modell-tip, .modell:focus-within .modell-tip{ display:block; }
+  .modell-tip .mhd{ display:block; font-weight:600; color:#cfe3ff; margin:7px 0 2px; }
+  .modell-tip .mhd:first-child{ margin-top:0; }
+  .modell-tip .mrow{ display:flex; justify-content:space-between; gap:12px; }
+  .modell-tip .mrow b{ color:#fff; font-variant-numeric:tabular-nums; }
+  .modell-tip .mfoot{ display:block; margin-top:8px; color:#d8d6cf; }
+
+  /* klassematrise (= sonevelger) */
+  .matrise{ display:grid; grid-template-columns:1.15fr 1fr 1fr 1fr; gap:5px; }
+  .mhode{ font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; padding:0 2px 4px; text-align:center; align-self:end; }
+  .mklasse{ display:flex; flex-direction:column; justify-content:center; padding:4px 2px; }
+  .mknavn{ font-size:12.5px; font-weight:600; }
+  .mksub{ font-size:10px; color:var(--muted); }
+  .mcelle{ border:1px solid var(--line); border-radius:7px; padding:6px 4px; text-align:center; cursor:pointer; user-select:none; transition:transform .05s; }
+  .mcelle:hover{ transform:translateY(-1px); }
+  .mcelle .mgr{ display:block; font-size:11px; font-variant-numeric:tabular-nums; opacity:.9; }
+  .mcelle .mav{ display:block; font-size:13px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:1px; }
+  .mcelle.pa{ box-shadow:0 0 0 2px rgba(15,23,42,.30); }
+  .leglbl{ display:flex; justify-content:space-between; font-size:10.5px; color:var(--muted); margin-top:12px; }
+  .leg{ display:flex; gap:3px; margin-top:6px; }
+  .leg .sw{ flex:1; text-align:center; font-size:9.5px; color:#fff; font-weight:600; border-radius:4px; padding:3px 0; font-variant-numeric:tabular-nums; }
+
+  /* pumpe-markør: roterende trekant + fast nummer */
+  .pwrap{ position:relative; width:26px; height:26px; }
+  .ptri{ position:absolute; left:50%; top:50%; width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:16px solid var(--accent); transform-origin:50% 50%; filter:drop-shadow(0 0 1px #fff); }
+  .pnum{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:18px; height:18px; border-radius:50%; background:var(--accent); color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; border:1.5px solid #fff; box-shadow:0 0 2px rgba(0,0,0,.4); }
+  .handleic{ width:15px;height:15px;border-radius:50%;background:#fff;border:2px solid var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.3);cursor:grab; }
+  .trashic{ width:24px;height:24px;border-radius:50%;background:#fff;border:2px solid var(--bad);display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.3); }
+  .nabopin{ position:relative; width:18px; height:18px; border-radius:50%; background:#1d6fb8; border:1.5px solid #fff; box-shadow:0 0 2px rgba(0,0,0,.4); color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .leaflet-tooltip.nbtt{ background:transparent;border:0;box-shadow:none;padding:0;font-weight:600; }
+  .nbpill{ display:inline-block;font-size:11px;padding:2px 7px;border-radius:9px;border:1px solid #fff;color:#fff;white-space:nowrap;font-variant-numeric:tabular-nums; }
+  .leaflet-container{ background:#e8e6df; }
+  /* Flytende åpne-knapp (☰) – vises bare når panelet er skjult/lukket. */
+  #toggle-sidebar{ display:none; position:fixed; top:12px; left:56px; z-index:1000; width:40px; height:40px; padding:0; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; font-size:20px; color:var(--ink); line-height:1; box-shadow:0 2px 6px rgba(0,0,0,0.15); }
+  #toggle-sidebar:hover{ background:#f3f1ea; }
+  body.side-collapsed #toggle-sidebar{ display:block; }
+  /* Mobile layout: panelet ligger over kartet og skyves inn/ut. */
+  @media (max-width:768px){
+    #wrap{ flex-direction:column; }
+    #divider{ display:none; }
+    #side{
+      position:fixed;
+      top:0;
+      left:0;
+      width:100%;
+      max-width:360px;
+      height:100%;
+      z-index:999;
+      transition:left 0.3s ease-out;
+      border-right:1px solid var(--line);
+      box-shadow:-2px 0 8px rgba(0,0,0,0.15);
+    }
+    body.side-collapsed #side{ left:-100%; display:block; }   /* skjult = skjøvet ut (ikke display:none, så animasjonen virker) */
+    #map{ width:100%; height:100%; }
+  }
+  @media (max-width:480px){
+    #side{ max-width:100%; }
+    h1{ font-size:16px; }
+    .sub{ font-size:11px; }
+    input[type=range], .btn{ font-size:13px; }
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="side">
+    <div class="side-head">
+      <h1>Varmepumpe – lydnivåsoner</h1>
+      <button id="side-close" class="side-close" title="Skjul panel" aria-label="Skjul panel">‹</button>
+    </div>
+    <p class="sub">Klikk i kartet for å plassere en utedel eller en nabo. Halvbuene viser hvor langt fra pumpa hvert lydnivå-krav nås. Nabopunktene viser <b>samlet</b> lydnivå fra alle utedeler. Modell:
+      <span class="tag modell" tabindex="0" role="button" aria-label="Typiske lydnivåer for ulike modeller">Multi Nordic 2M60S4 ⓘ<span class="modell-tip">
+        <span class="mhd">Multi Nordic 2M60S4 · dB(A) @ 1 m</span>
+        <span class="mrow"><span>Maks oppgitt</span><b>50</b></span>
+        <span class="mrow"><span>Maks oppgitt (NVE-avstand)</span><b>52</b></span>
+        <span class="mrow"><span>Stillemodus (−3 dB)</span><b>~46</b></span>
+        <span class="mrow"><span>Stillemodus (NVE)</span><b>~48</b></span>
+        <span class="mrow"><span>Dyp stillemodus</span><b>~40</b></span>
+        <span class="mrow"><span>Dyp stillemodus (NVE)</span><b>~42</b></span>
+        <span class="mhd">Andre pumper</span>
+        <span class="mrow"><span>Ny pumpe (2023), reell måling</span><b>53</b></span>
+        <span class="mrow"><span>Eldre pumpe, verste tilfelle</span><b>63</b></span>
+        <span class="mfoot">Skriv verdien fra databladet inn i «Lydnivå 1 m».</span>
+      </span></span>
+    </p>
+    <p class="sub"><a href="index.html">← NS 8175-kalkulatoren</a></p>
+
+    <div class="grp">
+      <label class="l">Klikk i kartet legger til</label>
+      <div class="seg" id="tool">
+        <button data-v="pump" class="on">Utedel</button>
+        <button data-v="nabo">Nabo</button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <label class="l">Lydkilde</label>
+      <div class="felt">
+        <label class="fl" for="lyd">Lydnivå 1 m (dBA)</label>
+        <input type="number" id="lyd" min="40" max="70" step="1" value="46">
+      </div>
+      <div class="felt">
+        <label class="ck"><input type="checkbox" id="vegg"> +3 dB vegg</label>
+      </div>
+      <div class="felt">
+        <label class="fl" for="kab">Kabinett (dB)</label>
+        <input type="number" id="kab" min="0" step="1" value="0">
+      </div>
+      <div class="eff" id="eff"></div>
+    </div>
+
+    <div class="grp">
+      <label class="l">Klassematrise · vis soner</label>
+      <div class="matrise" id="matrise"></div>
+      <div class="leglbl"><span>strengere · lengre avstand</span><span>mildere</span></div>
+      <div class="leg" id="leg"></div>
+      <p class="note">Klikk en celle for å vise/skjule den halvbuen på kartet. Celler med samme dB(A) henger sammen (A dag = B kveld = C natt). Avstanden er <b>rett foran</b> pumpa; til siden er buen ca. 56 % så lang. Buen tegnes bare foran – bakveggen antas å stå mot egen bolig.</p>
+    </div>
+
+    <div class="grp">
+      <label class="l">Retning for nye pumper</label>
+      <div class="row"><input type="range" id="defdir" min="0" max="359" value="180"><span class="val" id="defdirv">180°</span></div>
+      <p class="note">0° = nord, 90° = øst. Velg en pumpe i kartet og dra det hvite håndtaket for å snu den. Søppeltønna ved siden av en valgt utedel eller nabo sletter den.</p>
+    </div>
+
+    <div class="grp">
+      <label class="l">Oppsett</label>
+      <p class="note" id="counts"></p>
+      <button class="btn" id="clear">Tøm alle</button>
+      <button class="btn" id="save">Lagre til fil</button>
+      <button class="btn" id="load">Last fra fil</button>
+      <input type="file" id="loadfile" accept=".json,application/json" hidden>
+      <p class="note">Lagrer alt – soner, lydkilde, alle utedeler (plassering + vinkel), naboer og kartutsnitt – som en JSON-fil i nedlastingsmappa. «Last fra fil» setter alt tilbake til lagret tilstand.</p>
+    </div>
+
+    <div class="grp">
+      <label class="l">Les dette ærlig</label>
+      <p class="note">• Et <b>nabopunkt</b> viser den logaritmiske summen av alle utedelene – to pumper på 35 dBA hver gir ~38 dBA samlet.<br>
+      • Selv <b>under</b> grenseverdiene blir inntil ~20 % sjenert av lydnivået.<br>
+      • Retningskorreksjonen følger en cosinus-karakteristikk: 0 dB rett frem, økende til −5 dB ved 90° (samme modell som NS 8175-siden). Buen er da ca. 56 % så lang til siden som rett foran. Å vri pumpa så naboen havner på <i>siden</i> er ofte det som avgjør.<br>
+      • Avstandene er i ekte meter. Bruk målestokken nede i kartet som kontroll.<br>
+      • Modellen er en punktkilde i fritt felt; refleksjoner og bakgrunnslyd i tett bebyggelse kan gjøre virkeligheten verre, ikke bedre.</p>
+    </div>
+  </div>
+  <div id="divider" title="Dra for å justere bredden"></div>
+  <div id="map">
+    <button id="toggle-sidebar" aria-label="Vis panel">☰</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// Mobile sidebar toggle
+const toggleBtn=document.getElementById('toggle-sidebar');
+const sideBar=document.getElementById('side');
+const closeBtn=document.getElementById('side-close');
+const divider=document.getElementById('divider');
+
+function isMobile(){ return window.innerWidth<=768; }
+function setCollapsed(c){
+  document.body.classList.toggle('side-collapsed', c);
+  if(!isMobile()) setTimeout(()=>{ try{ map.invalidateSize(); }catch(_){} },260);
+}
+toggleBtn.addEventListener('click',()=>setCollapsed(false));   // ☰ viser panelet
+closeBtn.addEventListener('click',()=>setCollapsed(true));     // ‹ skjuler panelet
+// Lukk ved klikk utenfor panelet på mobil
+document.addEventListener('click',(e)=>{
+  if(isMobile() && !document.body.classList.contains('side-collapsed')
+     && !sideBar.contains(e.target) && !toggleBtn.contains(e.target)){
+    setCollapsed(true);
+  }
+});
+if(isMobile()) document.body.classList.add('side-collapsed');   // start skjult på mobil
+window.addEventListener('resize',()=>{ try{ map.invalidateSize(); }catch(_){} });
+
+// Justerbar panelbredde (dra-skille mellom panel og kart)
+let dragId=null;
+divider.addEventListener('pointerdown',e=>{ dragId=e.pointerId; divider.setPointerCapture(dragId); divider.classList.add('dragging'); document.body.style.userSelect='none'; });
+divider.addEventListener('pointermove',e=>{ if(dragId===null)return; sideBar.style.width=Math.max(300,Math.min(680,e.clientX))+'px'; });
+function endDrag(){ if(dragId===null)return; dragId=null; divider.classList.remove('dragging'); document.body.style.userSelect=''; try{ map.invalidateSize(); }catch(_){} }
+divider.addEventListener('pointerup',endDrag);
+divider.addEventListener('pointercancel',endDrag);
+
+// Modell-tooltip (position:fixed → plasseres ved taggen, klippes ikke av panelet)
+const modellTag=document.querySelector('.modell'), modellTip=document.querySelector('.modell-tip');
+function placeModellTip(){
+  const r=modellTag.getBoundingClientRect(), w=252;
+  const left=Math.max(8, Math.min(r.left, window.innerWidth-w-8));
+  const top=Math.max(8, Math.min(r.bottom+6, window.innerHeight-8-(modellTip.offsetHeight||246)));
+  modellTip.style.left=left+'px'; modellTip.style.top=top+'px';
+}
+modellTag.addEventListener('mouseenter',placeModellTip);
+modellTag.addEventListener('focus',placeModellTip);
+
+const CENTER=[59.6502276,10.8092635], MARKER=[59.6499609,10.809443];
+
+const map=L.map('map',{center:CENTER,zoom:19,maxZoom:22,zoomControl:true,preferCanvas:true});
+
+const esri=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:22,maxNativeZoom:19,attribution:'Flyfoto: Esri, Maxar, Earthstar Geographics'});
+const kv=L.tileLayer('https://cache.kartverket.no/v1/wmts/1.0.0/topo/default/webmercator/{z}/{y}/{x}.png',{maxZoom:22,maxNativeZoom:18,attribution:'&copy; Kartverket'});
+const kvg=L.tileLayer('https://cache.kartverket.no/v1/wmts/1.0.0/topograatone/default/webmercator/{z}/{y}/{x}.png',{maxZoom:22,maxNativeZoom:18,attribution:'&copy; Kartverket'});
+const osm=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:22,maxNativeZoom:19,attribution:'&copy; OpenStreetMap'});
+// stabile nøkler for basislag, så valgt karttype kan lagres/lastes
+const baseDefs=[
+  {key:'kvg', name:'Norgeskart gråtone', layer:kvg},
+  {key:'kv',  name:'Norgeskart topo',    layer:kv},
+  {key:'esri',name:'Flyfoto (Esri)',     layer:esri},
+  {key:'osm', name:'OpenStreetMap',      layer:osm},
+];
+let baseKey='kvg';
+kvg.addTo(map);   // gråtone som standard – fin kontrast til fargede lydnivåbuer
+const baseObj={}; baseDefs.forEach(d=>baseObj[d.name]=d.layer);
+L.control.layers(baseObj,null,{position:'topright',collapsed:false}).addTo(map);
+map.on('baselayerchange',e=>{ const d=baseDefs.find(d=>d.name===e.name); if(d) baseKey=d.key; });
+function setBase(key){ const d=baseDefs.find(d=>d.key===key); if(!d) return;
+  baseDefs.forEach(x=>{ if(x.key!==key && map.hasLayer(x.layer)) map.removeLayer(x.layer); });
+  if(!map.hasLayer(d.layer)) d.layer.addTo(map); baseKey=key; }
+L.control.scale({metric:true,imperial:false,maxWidth:160}).addTo(map);
+
+L.circleMarker(MARKER,{radius:4,color:'#1d6fb8',weight:2,fillColor:'#1d6fb8',fillOpacity:.7}).addTo(map).bindTooltip('Markør fra Norgeskart-lenken');
+
+// ---- klassematrise / soner ----
+// Speiler grense-tabellen i Lyd.Beregning (NS 8175). Matrisecellene ER sonevelgeren:
+// klikk en celle for å vise/skjule halvbuen på kartet. Soner nøkles på dB-grensen,
+// så like celler (A dag = B kveld = C natt = 35) toggles og highlightes sammen.
+const KLASSER=[
+  {k:'A',  navn:'Klasse A',  sub:'streng · frivillig'},
+  {k:'B+', navn:'Klasse B+', sub:'custom · C − 7 dB'},
+  {k:'B',  navn:'Klasse B',  sub:'anbefalt · frivillig'},
+  {k:'C',  navn:'Klasse C',  sub:'minstekrav'},
+];
+const TIDSROM=[{key:'Dag',navn:'Dag 07–19'},{key:'Kveld',navn:'Kveld 19–23'},{key:'Natt',navn:'Natt 23–07'}];
+// grenser per [klasse][tidsrom] = [dag, kveld, natt]
+const GRENSE={ 'A':[35,30,25], 'B+':[38,33,28], 'B':[40,35,30], 'C':[45,40,35] };
+const ALLE_GRENSER=[25,28,30,33,35,38,40,45];   // distinkte grenser, lav (streng) → høy (mild)
+const BPLUSS=new Set([28,33,38]);                 // B+-grensene (unike for B+-raden) tegnes stiplet
+let activeLimits=new Set([28,35,40,45]);          // standard synlige soner
+
+// Entydig fargeskala – én tydelig farge per dB-grense, ordnet streng→mild
+// (varm/rød = lav dB = streng = lang bue → kjølig/blå = mild = kort bue).
+// Både fargen og radien forteller dermed hvilken grense en bue er.
+const FARGE={25:'#dc2626',28:'#ea580c',30:'#d97706',33:'#ca8a04',35:'#2563eb',38:'#0891b2',40:'#059669',45:'#65a30d'};
+function heat(limit){ return FARGE[limit]||'#888'; }
+function heatText(limit){ const c=FARGE[limit]; if(!c) return '#fff';
+  const n=parseInt(c.slice(1),16), r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+  return (0.299*r+0.587*g+0.114*b)/255 > 0.58 ? '#15233a' : '#fff'; }
+function strictestLimit(){ return activeLimits.size ? Math.min(...activeLimits) : null; }
+
+// ---- akustikk-kjerne ----
+// Sannhetskilden er Lyd.Beregning (WASM), delt med NS 8175-siden. JS-funksjonene
+// nedenfor er rene fallbacks med NØYAKTIG samme modell (cosinus-karakteristikk:
+// 0 dB rett frem, −5 dB ved 90°), så tallene er like også om WASM ikke lastes.
+let WASM=null;
+window.__setAcoustics=(exports)=>{ WASM=exports; window.__acoustics=exports; redrawAll(); };
+
+function srcLevel(){
+  const lyd=Math.min(70,Math.max(40,parseFloat(document.getElementById('lyd').value)||0));
+  const vegg=document.getElementById('vegg').checked ? 3 : 0;
+  const kab=Math.max(0,parseFloat(document.getElementById('kab').value)||0);
+  return lyd+vegg-kab;
+}
+function dirGainJS(angleDeg){ const a=Math.min(Math.abs(angleDeg),90); return -5*(1-Math.cos(a*Math.PI/180)); }
+function dirGain(angleDeg){ return WASM ? WASM.acoustics_dirGain(angleDeg) : dirGainJS(angleDeg); }
+function reqDist(angleDeg,limit){
+  return WASM ? WASM.acoustics_reqDist(srcLevel(),limit,angleDeg)
+              : Math.pow(10,(srcLevel()+dirGainJS(angleDeg)-limit)/20);
+}
+function levelAt(p,n){
+  const r=Math.max(map.distance(p.latlng,n.latlng),1);
+  const a=Math.abs(((bearing(p.latlng,n.latlng)-p.brg+540)%360)-180);
+  return WASM ? WASM.acoustics_levelAt(srcLevel(),r,a)
+              : srcLevel()+dirGainJS(a)-20*Math.log10(r);
+}
+function dbSum(levels){
+  if(!levels.length) return null;
+  return WASM ? WASM.acoustics_dbSum(Float64Array.from(levels))
+              : 10*Math.log10(levels.reduce((s,L)=>s+Math.pow(10,L/10),0));
+}
+
+function destPoint(lat,lng,brgDeg,distM){
+  const R=6378137, d=distM/R, b=brgDeg*Math.PI/180, f1=lat*Math.PI/180, l1=lng*Math.PI/180;
+  const f2=Math.asin(Math.sin(f1)*Math.cos(d)+Math.cos(f1)*Math.sin(d)*Math.cos(b));
+  const l2=l1+Math.atan2(Math.sin(b)*Math.sin(d)*Math.cos(f1),Math.cos(d)-Math.sin(f1)*Math.sin(f2));
+  return [f2*180/Math.PI,l2*180/Math.PI];
+}
+function bearing(from,to){
+  const f1=from.lat*Math.PI/180,f2=to.lat*Math.PI/180,dl=(to.lng-from.lng)*Math.PI/180;
+  const y=Math.sin(dl)*Math.cos(f2), x=Math.cos(f1)*Math.sin(f2)-Math.sin(f1)*Math.cos(f2)*Math.cos(dl);
+  return (Math.atan2(y,x)*180/Math.PI+360)%360;
+}
+function lobePts(p,limit){
+  const pts=[];
+  for(let a=-90;a<=90;a+=6){ const r=reqDist(a,limit); pts.push(destPoint(p.latlng.lat,p.latlng.lng,p.brg+a,r)); }
+  return pts;
+}
+
+// ---- tilstand ----
+let pumps=[], nabos=[], sel=null, tool='pump', pumpNo=0, nabNo=0;  // sel = {kind:'pump'|'nabo', id} | null
+const HANDLE_M=8;
+function arrowIcon(brg,num){ return L.divIcon({className:'',iconSize:[26,26],iconAnchor:[13,13],
+  html:`<div class="pwrap"><span class="ptri" style="transform:translate(-50%,-50%) rotate(${brg}deg)"></span><span class="pnum">${num}</span></div>`}); }
+function naboIcon(num){ return L.divIcon({className:'',iconSize:[18,18],iconAnchor:[9,9],html:`<div class="nabopin">${num}</div>`}); }
+
+// ---- valg + kart-kontroller (vinkelhåndtak + søppeltønne) ----
+const dialArm=L.polyline([],{color:'#23231f',weight:1.5,dashArray:'3 3'});
+const handle=L.marker(CENTER,{icon:L.divIcon({className:'',iconSize:[15,15],iconAnchor:[7.5,7.5],html:'<div class="handleic"></div>'}),draggable:true,zIndexOffset:2000});
+const trash=L.marker(CENTER,{icon:L.divIcon({className:'',iconSize:[24,24],iconAnchor:[12,12],html:'<div class="trashic">🗑</div>'}),interactive:true,zIndexOffset:2100});
+trash.on('click',e=>{ L.DomEvent.stop(e); if(!sel) return; sel.kind==='pump' ? removePump(sel.id) : removeNabo(sel.id); });
+
+function curPump(){ return sel&&sel.kind==='pump' ? pumps.find(p=>p.id===sel.id) : null; }
+function curNabo(){ return sel&&sel.kind==='nabo' ? nabos.find(n=>n.id===sel.id) : null; }
+function selLatLng(){ const p=curPump(); if(p) return p.latlng; const n=curNabo(); return n?n.latlng:null; }
+// Søppeltønna rett bak tallet: fast piksel-avstand (uavhengig av zoom). For en
+// pumpe legges den motsatt peileretningen (bak trekanten); for en nabo rett under.
+function trashPos(p){
+  const ll=selLatLng(); if(!ll) return null;
+  let dx=0, dy=24;
+  if(p){ const rad=p.brg*Math.PI/180; dx=-Math.sin(rad)*24; dy=Math.cos(rad)*24; }
+  return map.containerPointToLatLng(map.latLngToContainerPoint(ll).add([dx,dy]));
+}
+
+function positionControls(){
+  const p=curPump();
+  // vinkelhåndtak: kun for valgt pumpe
+  if(p){
+    const h=destPoint(p.latlng.lat,p.latlng.lng,p.brg,HANDLE_M);
+    handle.setLatLng(h); dialArm.setLatLngs([p.latlng,h]);
+    if(!map.hasLayer(handle)) handle.addTo(map);
+    if(!map.hasLayer(dialArm)) dialArm.addTo(map);
+  } else {
+    if(map.hasLayer(handle)) map.removeLayer(handle);
+    if(map.hasLayer(dialArm)) map.removeLayer(dialArm);
+  }
+  // søppeltønne: for valgt pumpe ELLER nabo – rett bak tallet
+  const tp=trashPos(p);
+  if(tp){ trash.setLatLng(tp); if(!map.hasLayer(trash)) trash.addTo(map); }
+  else if(map.hasLayer(trash)) map.removeLayer(trash);
+}
+handle.on('drag',()=>{ const p=curPump(); if(!p)return;
+  p.brg=Math.round(bearing(p.latlng,handle.getLatLng()));
+  dialArm.setLatLngs([p.latlng,handle.getLatLng()]);
+  p.marker.setIcon(arrowIcon(p.brg,p.num));
+  const tp=trashPos(p); if(tp) trash.setLatLng(tp);   // tønna følger med (bak tallet)
+  scheduleDraw(p);
+});
+handle.on('dragend',()=>{ const p=curPump(); if(!p)return; positionControls(); recomputeNabos(); });
+
+function deselect(){ sel=null; pumps.forEach(p=>p.marker.setZIndexOffset(0)); positionControls(); }
+// Klikk på en allerede valgt markør opphever valget (toggle).
+function selectPump(id){
+  if(sel&&sel.kind==='pump'&&sel.id===id){ deselect(); return; }
+  sel={kind:'pump',id}; pumps.forEach(p=>p.marker.setZIndexOffset(p.id===id?1000:0)); positionControls();
+}
+function selectNabo(id){
+  if(sel&&sel.kind==='nabo'&&sel.id===id){ deselect(); return; }
+  sel={kind:'nabo',id}; pumps.forEach(p=>p.marker.setZIndexOffset(0)); positionControls();
+}
+// Reposisjoner kontrollene ved zoom (piksel-avstanden til tønna avhenger av zoom).
+map.on('zoomend',()=>{ if(sel) positionControls(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&sel) deselect(); });
+
+// ---- throttling ----
+let rafId=null, rafPump=null;
+function scheduleDraw(p){ rafPump=p; if(rafId)return; rafId=requestAnimationFrame(()=>{rafId=null; drawPump(rafPump);}); }
+let nabPend=false;
+function scheduleNabos(){ if(nabPend)return; nabPend=true; requestAnimationFrame(()=>{nabPend=false; recomputeNabos();}); }
+
+// ---- pumper ----
+function addPump(latlng,brg,num){
+  if(brg==null) brg=parseInt(document.getElementById('defdir').value,10);
+  if(num==null) num=++pumpNo;
+  const m=L.marker(latlng,{icon:arrowIcon(brg,num),draggable:true}).addTo(map);
+  const zones={}; ALLE_GRENSER.forEach(lim=>{ zones[lim]=L.polygon([],{color:heat(lim),weight:1.5,fillColor:heat(lim),fillOpacity:.10}); });
+  const p={id:num,num:num,marker:m,zones:zones,latlng:latlng,brg:brg};
+  m.on('click',e=>{L.DomEvent.stop(e);selectPump(p.id);});
+  m.on('drag',e=>{ p.latlng=e.target.getLatLng(); scheduleDraw(p); if(sel&&sel.kind==='pump'&&sel.id===p.id) positionControls(); scheduleNabos(); });
+  m.on('dragend',()=>{ drawPump(p); recomputeNabos(); if(sel&&sel.kind==='pump'&&sel.id===p.id) positionControls(); });
+  pumps.push(p); updateCounts(); selectPump(p.id); drawPump(p); recomputeNabos();
+}
+function drawPump(p){
+  ALLE_GRENSER.forEach(lim=>{
+    const z=p.zones[lim];
+    if(activeLimits.has(lim)){
+      const c=heat(lim), erBp=BPLUSS.has(lim);
+      z.setStyle({color:c,fillColor:c,weight:erBp?2.8:2,dashArray:erBp?'8 6':null,fillOpacity:erBp?0:.08});
+      z.setLatLngs(lobePts(p,lim));
+      if(!map.hasLayer(z)) z.addTo(map);
+    } else if(map.hasLayer(z)) map.removeLayer(z);
+  });
+}
+function redrawAll(){ pumps.forEach(drawPump); updateKilde(); renderMatrise(); recomputeNabos(); }
+function removePump(id){
+  const i=pumps.findIndex(p=>p.id===id); if(i<0)return;
+  map.removeLayer(pumps[i].marker);
+  ALLE_GRENSER.forEach(lim=>{ const z=pumps[i].zones[lim]; if(map.hasLayer(z)) map.removeLayer(z); });
+  pumps.splice(i,1);
+  if(sel&&sel.kind==='pump'&&sel.id===id){ sel=null; positionControls(); }
+  updateCounts(); recomputeNabos();
+}
+
+// ---- naboer ----
+function addNabo(latlng,num){
+  if(num==null) num=++nabNo;
+  const m=L.marker(latlng,{draggable:true,icon:naboIcon(num)}).addTo(map);
+  m.bindTooltip('',{permanent:true,direction:'top',offset:[0,-9],className:'nbtt'});
+  const n={id:num,num:num,marker:m,latlng:latlng};
+  m.on('drag',e=>{ n.latlng=e.target.getLatLng(); scheduleNabos(); if(sel&&sel.kind==='nabo'&&sel.id===n.id) positionControls(); });
+  m.on('dragend',()=>{ if(sel&&sel.kind==='nabo'&&sel.id===n.id) positionControls(); });
+  m.on('click',e=>{ L.DomEvent.stop(e); selectNabo(n.id); });
+  nabos.push(n); updateCounts(); selectNabo(n.id); recomputeNabos();
+}
+function removeNabo(id){
+  const i=nabos.findIndex(n=>n.id===id); if(i<0)return;
+  map.removeLayer(nabos[i].marker); nabos.splice(i,1);
+  if(sel&&sel.kind==='nabo'&&sel.id===id){ sel=null; positionControls(); }
+  updateCounts();
+}
+function recomputeNabos(){
+  const lim=strictestLimit();
+  nabos.forEach(n=>{
+    const tot=dbSum(pumps.map(p=>levelAt(p,n)));
+    if(tot===null){ n.marker.setTooltipContent(`<span class="nbpill" style="background:#888">N${n.num} · ingen utedel</span>`); return; }
+    const col = lim===null ? '#888' : (tot>lim?'var(--bad)':'var(--ok)');
+    const txt = lim===null ? `N${n.num} · ${tot.toFixed(0)} dBA` : `N${n.num} · ${tot.toFixed(0)} dBA · ${tot>lim?'over':'under'}`;
+    n.marker.setTooltipContent(`<span class="nbpill" style="background:${col}">${txt}</span>`);
+  });
+}
+
+// ---- matrise + lydkilde-visning ----
+function updateKilde(){
+  const el=document.getElementById('eff');
+  if(el) el.innerHTML=`Effektivt kildenivå: <b>${srcLevel().toFixed(0)} dB(A)</b>`;
+}
+function updateCounts(){
+  const el=document.getElementById('counts'); if(!el) return;
+  el.textContent=`${pumps.length} utedel${pumps.length===1?'':'er'} · ${nabos.length} nabo${nabos.length===1?'':'er'}`;
+}
+function renderMatrise(){
+  const el=document.getElementById('matrise'); if(!el) return;
+  el.innerHTML='';
+  const cell=(cls,txt)=>{ const d=document.createElement('div'); d.className=cls; if(txt) d.textContent=txt; return d; };
+  el.appendChild(cell('mhode mhjorne',''));
+  TIDSROM.forEach(t=>el.appendChild(cell('mhode',t.navn)));
+  KLASSER.forEach(kl=>{
+    const lab=document.createElement('div'); lab.className='mklasse';
+    lab.innerHTML=`<span class="mknavn">${kl.navn}</span><span class="mksub">${kl.sub}</span>`;
+    el.appendChild(lab);
+    GRENSE[kl.k].forEach(lim=>{
+      const on=activeLimits.has(lim);
+      const d=document.createElement('div');
+      d.className='mcelle'+(on?' pa':'');
+      d.style.background=on?heat(lim):'#fff';
+      d.style.color=on?heatText(lim):'var(--muted)';
+      d.style.borderColor=on?heat(lim):'var(--line)';
+      if(BPLUSS.has(lim)) d.style.borderStyle='dashed';   // B+-grensene markeres stiplet
+      d.innerHTML=`<span class="mgr">${lim} dB(A)</span><span class="mav">${reqDist(0,lim).toFixed(1)} m</span>`;
+      d.addEventListener('click',()=>toggleLimit(lim));
+      el.appendChild(d);
+    });
+  });
+}
+function toggleLimit(lim){ activeLimits.has(lim) ? activeLimits.delete(lim) : activeLimits.add(lim); redrawAll(); }
+function renderLeg(){
+  const el=document.getElementById('leg'); if(!el) return; el.innerHTML='';
+  ALLE_GRENSER.forEach(lim=>{   // streng (lav dB) → mild (høy dB)
+    const s=document.createElement('div'); s.className='sw';
+    s.style.background=heat(lim); s.style.color=heatText(lim); s.textContent=lim;
+    if(BPLUSS.has(lim)) s.style.border='1.5px dashed #fff';   // B+-grensene markeres stiplet
+    el.appendChild(s);
+  });
+}
+
+// ---- events ----
+map.on('click',e=>{ tool==='pump' ? addPump(e.latlng) : addNabo(e.latlng); });
+document.querySelectorAll('#tool button').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('#tool button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); tool=b.dataset.v;
+}));
+['lyd','vegg','kab'].forEach(id=>{ const e=document.getElementById(id); e.addEventListener('input',redrawAll); e.addEventListener('change',redrawAll); });
+const dd=document.getElementById('defdir'); dd.addEventListener('input',()=>document.getElementById('defdirv').textContent=dd.value+'°');
+document.getElementById('clear').addEventListener('click',()=>{
+  [...pumps].forEach(p=>removePump(p.id)); [...nabos].forEach(n=>removeNabo(n.id));
+  pumpNo=0; nabNo=0; sel=null; positionControls(); updateCounts();
+});
+
+// ---- lagre / laste oppsett (JSON til/fra nedlastingsmappa) ----
+function snapshot(){
+  const c=map.getCenter();
+  return {
+    format:'lydnivakart', version:2, savedAt:new Date().toISOString(),
+    settings:{
+      lyd:Math.min(70,Math.max(40,parseFloat(document.getElementById('lyd').value)||0)),
+      vegg:document.getElementById('vegg').checked,
+      kab:Math.max(0,parseFloat(document.getElementById('kab').value)||0),
+      limits:[...activeLimits].sort((a,b)=>a-b),
+      defdir:parseInt(document.getElementById('defdir').value,10),
+      base:baseKey,
+    },
+    pumps:pumps.map(p=>({num:p.num,lat:p.latlng.lat,lng:p.latlng.lng,brg:p.brg})),
+    nabos:nabos.map(n=>({num:n.num,lat:n.latlng.lat,lng:n.latlng.lng})),
+    view:{center:[c.lat,c.lng],zoom:map.getZoom()},
+  };
+}
+function restore(d){
+  if(!d || d.format!=='lydnivakart'){ alert('Ukjent filformat – forventet et lydnivakart-oppsett.'); return; }
+  // tøm nåværende tilstand
+  [...pumps].forEach(p=>removePump(p.id)); [...nabos].forEach(n=>removeNabo(n.id));
+  pumpNo=0; nabNo=0; sel=null;
+  const s=d.settings||{};
+  // lydkilde: v2 (lyd/vegg/kab) eller migrering fra v1 (mode/mount)
+  let lyd, vegg, kab;
+  if(s.lyd!=null){ lyd=s.lyd; vegg=!!s.vegg; kab=s.kab||0; }
+  else { lyd=parseFloat(s.mode)||50; vegg=String(s.mount)==='3'; kab=0; }   // gammelt format
+  document.getElementById('lyd').value=lyd;
+  document.getElementById('vegg').checked=vegg;
+  document.getElementById('kab').value=kab;
+  // soner: v2 (limits) eller v1 (bands med navngitte nøkler)
+  if(Array.isArray(s.limits)){ activeLimits=new Set(s.limits); }
+  else if(s.bands){
+    const map5={natBp:28,nattB:30,nattC:35,kvC:40,dagC:45};
+    activeLimits=new Set(Object.keys(map5).filter(k=>s.bands[k]).map(k=>map5[k]));
+  }   // mangler begge → behold nåværende activeLimits
+  // standardretning
+  if(s.defdir!=null){ const dd=document.getElementById('defdir');
+    dd.value=s.defdir; document.getElementById('defdirv').textContent=s.defdir+'°'; }
+  // karttype
+  if(s.base!=null) setBase(s.base);
+  // pumper og naboer
+  (d.pumps||[]).forEach(p=>{ addPump(L.latLng(p.lat,p.lng),p.brg,p.num); });
+  (d.nabos||[]).forEach(n=>{ addNabo(L.latLng(n.lat,n.lng),n.num); });
+  pumpNo=pumps.reduce((m,p)=>Math.max(m,p.num),0);
+  nabNo=nabos.reduce((m,n)=>Math.max(m,n.num),0);
+  sel=null; positionControls();
+  // kartutsnitt
+  if(d.view&&d.view.center) map.setView(d.view.center,d.view.zoom);
+  redrawAll(); recomputeNabos();
+}
+function stamp(){ const p=n=>String(n).padStart(2,'0'); const t=new Date();
+  return `${t.getFullYear()}${p(t.getMonth()+1)}${p(t.getDate())}-${p(t.getHours())}${p(t.getMinutes())}`; }
+document.getElementById('save').addEventListener('click',()=>{
+  const blob=new Blob([JSON.stringify(snapshot(),null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download=`lydnivakart-${stamp()}.json`; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),0);
+});
+document.getElementById('load').addEventListener('click',()=>document.getElementById('loadfile').click());
+document.getElementById('loadfile').addEventListener('change',e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ try{ restore(JSON.parse(r.result)); }catch(err){ alert('Kunne ikke lese fila: '+err.message); } };
+  r.readAsText(f);
+  e.target.value='';   // tillat å laste samme fil på nytt
+});
+
+updateKilde(); renderMatrise(); renderLeg(); updateCounts();   // første visning (JS-fallback); WASM-init kaller redrawAll() når klar
+
+// ---- default-oppsett (hybrid: live fra GitHub raw, faller tilbake på bundlet kopi) ----
+// Rediger frontend/static/default.json på main for å endre standardverdiene for alle.
+// Live-versjonen (raw) slår igjennom ved refresh UTEN ny deploy (~5 min CDN-cache).
+// Bundlet kopi i dist/ brukes kun hvis raw ikke kan hentes (nett/CORS/offline).
+const DEFAULT_RAW='https://raw.githubusercontent.com/ttnesby/lydtrykk/main/frontend/static/default.json';
+async function loadDefaults(){
+  const get=url=>fetch(url,{cache:'no-store'}).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); });
+  let d=null;
+  try{ d=await get(DEFAULT_RAW+'?t='+Date.now()); }                       // live-versjon
+  catch(e){ console.warn('Live default utilgjengelig, prøver bundlet kopi:',e);
+    try{ d=await get('default.json'); }                                   // bundlet fallback
+    catch(e2){ console.warn('Ingen default.json funnet – starter tomt:',e2); return; } }
+  try{ restore(d); }catch(e){ console.warn('Kunne ikke bruke default-oppsett:',e); }
+}
+loadDefaults();    // legger inn standard pumper/soner/utsnitt ved hver (hard) refresh
+</script>
+
+<!-- Akustikk-kjernen: samme app.wasm som NS 8175-siden. Init kjører reactor-modus
+     uten hs_start, så Miso-kalkulatoren IKKE monteres inn i denne siden. -->
+<script type="module">
+  import { WASI, OpenFile, File, ConsoleStdout } from "https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.3.0/dist/index.js";
+  import ghc_wasm_jsffi from "./ghc_wasm_jsffi.js";
+  try {
+    const wasi = new WASI([], ["GHCRTS=-H64m"], [
+      new OpenFile(new File([])),
+      ConsoleStdout.lineBuffered((msg) => console.log(`[wasm] ${msg}`)),
+      ConsoleStdout.lineBuffered((msg) => console.warn(`[wasm] ${msg}`)),
+    ], { debug: false });
+    const exports = {};
+    const { instance } = await WebAssembly.instantiateStreaming(fetch("app.wasm"), {
+      wasi_snapshot_preview1: wasi.wasiImport,
+      ghc_wasm_jsffi: ghc_wasm_jsffi(exports),
+    });
+    Object.assign(exports, instance.exports);
+    wasi.initialize(instance);
+    window.__setAcoustics(instance.exports);
+  } catch (e) {
+    console.warn("WASM-kjernen kunne ikke lastes – bruker JS-fallback:", e);
+  }
+</script>
+</body>
+</html>
