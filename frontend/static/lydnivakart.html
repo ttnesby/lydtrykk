@@ -576,15 +576,27 @@ function computeGrid(rows,cols,res,origin){
   const perWorker=Math.ceil(rows/gridWorkers.length);
   const jobs=gridWorkers.map((w,i)=>{
     const rowStart=i*perWorker, rowEnd=Math.min(rows,rowStart+perWorker);
-    if(rowStart>=rowEnd) return Promise.resolve(null);
+    if(rowStart>=rowEnd) return Promise.resolve(undefined);
     return new Promise(resolve=>{
-      const onMsg=e=>{ if(e.data.reqId!==reqId) return; w.removeEventListener('message',onMsg); resolve(e.data); };
+      let timeoutId=null;
+      const cleanup=()=>{
+        w.removeEventListener('message',onMsg);
+        w.removeEventListener('error',onErr);
+        w.removeEventListener('messageerror',onErr);
+        if(timeoutId!=null) clearTimeout(timeoutId);
+      };
+      const onMsg=e=>{ if(e.data.reqId!==reqId) return; cleanup(); resolve(e.data); };
+      const onErr=e=>{ cleanup(); console.warn('Grid-worker feilet – hopper over denne runden:',e.message||e); resolve(null); };
+      timeoutId=setTimeout(()=>{ cleanup(); console.warn('Grid-worker brukte for lang tid – hopper over denne runden.'); resolve(null); },15000);
       w.addEventListener('message',onMsg);
+      w.addEventListener('error',onErr);
+      w.addEventListener('messageerror',onErr);
       w.postMessage({reqId,rowStart,rowEnd,cols,cellSizeM:res,pumps:pl,srcLevel:src});
     });
   });
   return Promise.all(jobs).then(parts=>{
     if(reqId!==gridReqSeq) return null;   // en nyere forespørsel har overtatt i mellomtiden
+    if(parts.some(part=>part===null)) return null;
     const grid=new Float64Array(rows*cols);
     parts.forEach(part=>{ if(part) grid.set(part.values, part.rowStart*cols); });
     return grid;
