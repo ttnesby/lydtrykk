@@ -45,10 +45,14 @@ source ~/.ghc-wasm/env
 python3 -m http.server -d dist   # open http://localhost:8000
 ```
 
-Without a wasm build, both HTML pages still run: `app.wasm`/`ghc_wasm_jsffi.js`
-fetches 404, and every acoustics call falls back to an equivalent hand-written
-JS formula (see "Dual implementation" below). This is enough to iterate on UI/
-map logic without the wasm toolchain installed.
+Without a wasm build, both HTML pages still run: `wasmInit.js` tries the local
+`app.wasm` first, and when that fails it loads the deployed binary (plus its
+paired `ghc_wasm_jsffi.js`) from `https://ttnesby.github.io/lydtrykk/` —
+GitHub Pages serves both with CORS `*` and correct MIME types. This is enough
+to iterate on UI/map logic without the wasm toolchain installed, but it needs
+network access, and a *new* JSFFI export that only exists on your branch is
+absent from the deployed binary — exercising it requires a local build (or
+the PR preview) until it reaches `main`.
 
 There is no separate lint/format command wired up; Haskell is formatted with
 ormolu via HLS (2-space indent, see `.zed/settings.json`), not enforced by CI.
@@ -74,8 +78,8 @@ Everything else in the repo — the calculator UI, the map simulator, and the
 grid workers — is a thin caller of this module. `lyd-core/test/Spec.hs` pins
 it down with golden values (from a verified reference notebook), a round-trip
 QuickCheck property (`lydnivaa (avstand lp) == lp`), and monotonicity
-properties. Change the model here first, and check tests before touching any
-JS call site.
+properties. Change the model here, and check tests — the JS side only *calls*
+the core (via WASM), it never re-implements it.
 
 ### WASM export surface (`frontend/app/Main.hs`)
 
@@ -92,15 +96,17 @@ flags that actually expose these symbols from the wasm binary live in
 new export needs both a `foreign export javascript` line *and* a matching
 `--export` flag.
 
-### Dual implementation: WASM is authoritative, JS is a pinned fallback
+### Single implementation: all math lives in `Lyd.Beregning`
 
-Every acoustics call site in JS (main thread in `lydnivakart.html`, and each
-`gridWorker.js` instance) has a hand-written fallback (`dirGainJS`,
-`levelAtJS`/inline equivalents, `dbSumJS`) using the exact same formulas as
-`Beregning.hs`. If WASM fails to load, the site silently swaps to the JS
-version with no visible difference to the user. When changing the model in
-`Beregning.hs`, update these JS mirrors too, or the two code paths will
-silently diverge in degraded mode.
+There are no JS copies of the acoustics formulas. Every call site (main
+thread in `lydnivakart.html`, each `gridWorker.js` instance, and `index.js`)
+gets the core through the shared two-stage boot in `wasmInit.js`: local
+`app.wasm` first, then the deployed binary from GitHub Pages (see "Commands"
+above). If neither loads, the pages show a visible error instead of silently
+computing wrong numbers — on the map page, matrix/zones/grid render only
+after `bootAkustikk()` has received the exports (guards in `drawPump`/
+`renderMatrise` cover map clicks that arrive before then), and a worker
+without a core replies `{error: true}` so that grid round is skipped.
 
 ### `lydnivakart.html`: grid/ekvidistanser feature (the newest, most involved part)
 
