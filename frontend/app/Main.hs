@@ -73,6 +73,7 @@ foreign export javascript "acoustics_dirGain sync" js_dirGain :: Double -> Doubl
 foreign export javascript "acoustics_reqDist sync" js_reqDist :: Double -> Double -> Double -> Double
 foreign export javascript "acoustics_levelAt sync" js_levelAt :: Double -> Double -> Double -> Double
 foreign export javascript "acoustics_dbSum sync" js_dbSum :: JSVal -> Double
+foreign export javascript "acoustics_grense sync" js_grense :: Int -> Int -> Double
 
 foreign import javascript unsafe "$1.length" js_arrLen :: JSVal -> Int
 foreign import javascript unsafe "$1[$2]" js_arrAt :: JSVal -> Int -> Double
@@ -105,6 +106,17 @@ js_levelAt src r vinkel =
 -- | Logaritmisk sum av nivåene i en JS-array. = 'kumulativ'.
 js_dbSum :: JSVal -> Double
 js_dbSum arr = dBA (kumulativ [Desibel (js_arrAt arr i) | i <- [0 .. js_arrLen arr - 1]])
+
+-- | Grenseverdi (dBA) fra NS 8175-tabellen, = 'grense'. Indeksene følger
+-- enum-rekkefølgen: klasse 0–3 = A, B+, B, C; tidsrom 0–2 = Dag, Kveld, Natt
+-- (JS-siden bygger hele grensetabellen herfra i stedet for å ha en kopi av
+-- tallene). Indeksene klampes til gyldig område, så et vilkårlig JS-kall
+-- aldri kan treffe utenfor enumene.
+js_grense :: Int -> Int -> Double
+js_grense k t = dBA (grense klasse tidsrom)
+  where
+    klasse = toEnum (max 0 (min (fromEnum (maxBound :: Lydklasse)) k))
+    tidsrom = toEnum (max 0 (min (fromEnum (maxBound :: Tidsrom)) t))
 #endif
 
 app :: App Model Action

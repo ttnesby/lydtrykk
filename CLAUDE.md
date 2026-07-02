@@ -31,6 +31,16 @@ path, e.g. group "gylne verdier..." > case "..."):
 cabal test lyd-core-test --test-options="--pattern <substring>"
 ```
 
+### JS tests (node, no dependencies)
+
+The pure JS modules (`frontend/static/gridGeo.js` — projection/marching
+squares, `frontend/static/migrering.js` — save-format migration) are tested
+with node's built-in runner:
+
+```sh
+node --test frontend/test/*.test.mjs
+```
+
 ### WASM build (full app, needed to exercise either HTML page for real)
 
 Requires [ghc-wasm-meta](https://gitlab.haskell.org/haskell-wasm/ghc-wasm-meta)
@@ -84,10 +94,14 @@ the core (via WASM), it never re-implements it.
 ### WASM export surface (`frontend/app/Main.hs`)
 
 Under `#ifdef WASM` (set via `cpp-options: -DWASM` only when
-`arch(wasm32)`, see `frontend/frontend.cabal`), `Main.hs` exports four
+`arch(wasm32)`, see `frontend/frontend.cabal`), `Main.hs` exports five
 *synchronous* JSFFI functions layered directly on `Lyd.Beregning`:
 `acoustics_dirGain`, `acoustics_reqDist`, `acoustics_levelAt`,
-`acoustics_dbSum`. Synchronous exports (the `" sync"` suffix in the
+`acoustics_dbSum`, and `acoustics_grense` (limit table by clamped
+class/tidsrom enum indices — the map page builds its whole `GRENSE` matrix
+from this at boot, so the NS 8175 numbers have no JS copy either; the
+`KLASSER`/`TIDSROM` array order in `lydnivakart.html` must match the Haskell
+enum order). Synchronous exports (the `" sync"` suffix in the
 `foreign export javascript` declarations) are required because both
 `lydnivakart.html` and `gridWorker.js` call them inside tight draw/compute
 loops — an async/Promise-based export would be unworkable there. The linker
@@ -98,15 +112,35 @@ new export needs both a `foreign export javascript` line *and* a matching
 
 ### Single implementation: all math lives in `Lyd.Beregning`
 
-There are no JS copies of the acoustics formulas. Every call site (main
-thread in `lydnivakart.html`, each `gridWorker.js` instance, and `index.js`)
-gets the core through the shared two-stage boot in `wasmInit.js`: local
-`app.wasm` first, then the deployed binary from GitHub Pages (see "Commands"
-above). If neither loads, the pages show a visible error instead of silently
-computing wrong numbers — on the map page, matrix/zones/grid render only
-after `bootAkustikk()` has received the exports (guards in `drawPump`/
-`renderMatrise` cover map clicks that arrive before then), and a worker
-without a core replies `{error: true}` so that grid round is skipped.
+There are no JS copies of the acoustics formulas — nor of the limit table
+(fetched via `acoustics_grense`, see above). Every call site (main thread in
+`lydnivakart.html`, each `gridWorker.js` instance, and `index.js`) gets the
+core through the shared two-stage boot in `wasmInit.js`: local `app.wasm`
+first, then the deployed binary from GitHub Pages (see "Commands" above). If
+neither loads — or the binary is too old to have `acoustics_grense` — the
+pages show a visible error instead of silently computing wrong numbers: on
+the map page, matrix/zones/grid render only after `bootAkustikk()` has
+received the exports (guards in `drawPump`/`renderMatrise` cover map clicks
+that arrive before then), and a worker without a core replies `{error: true}`
+so that grid round is skipped.
+
+### Runtime dependencies: vendored WASI shim, SRI-pinned Leaflet
+
+The WASI shim (`@bjorn3/browser_wasi_shim@0.3.0` dist files) is vendored in
+`frontend/static/vendor/wasi/` — wasm boot does not depend on jsdelivr being
+up; upgrade by re-downloading the dist files. Leaflet still comes from cdnjs
+but is pinned with SRI `integrity` hashes in `lydnivakart.html`; bumping the
+Leaflet version requires recomputing those hashes
+(`curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`).
+
+### Testable JS modules (`gridGeo.js`, `migrering.js`)
+
+The map page's main script is one ES module that imports the pure parts from
+two node-testable modules (`frontend/test/*.test.mjs`, run in CI before the
+Haskell tests): `gridGeo.js` (local planar projection, `destPoint`/`bearing`,
+marching squares — returns plain `{lat, lng}` objects, no Leaflet dependency)
+and `migrering.js` (`normaliserOppsett`, the tolerant v1/v2/v3 save-format
+migration that `restore()` applies).
 
 ### `lydnivakart.html`: grid/ekvidistanser feature (the newest, most involved part)
 

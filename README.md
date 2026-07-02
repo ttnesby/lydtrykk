@@ -63,13 +63,16 @@ andre offsettene er A = 10 dBA og B = 5 dBA strengere enn C.
 
 Simulatoren deler **samme akustikk-kjerne** (`Lyd.Beregning`) som NS 8175-siden,
 eksponert fra `app.wasm` via synkrone JSFFI-eksporter (`acoustics_dirGain`,
-`acoustics_reqDist`, `acoustics_levelAt`, `acoustics_dbSum`). Både hovedtråden
-og hver grid-worker instansierer WASM-kjernen via en delt boot-sekvens
-(`wasmInit.js`), så tallene kan ikke divergere. Matematikken finnes **kun** i
-Haskell: mangler den lokale `app.wasm` (lokal utvikling uten wasm-bygg),
-henter `wasmInit.js` i stedet den deployede binæren fra GitHub Pages; kan
-heller ikke den lastes, vises en tydelig feilmelding i stedet for at siden
-regner stille feil.
+`acoustics_reqDist`, `acoustics_levelAt`, `acoustics_dbSum`,
+`acoustics_grense`). Både hovedtråden og hver grid-worker instansierer
+WASM-kjernen via en delt boot-sekvens (`wasmInit.js`), så tallene kan ikke
+divergere. Matematikken – og NS 8175-grensetabellen (`acoustics_grense`) –
+finnes **kun** i Haskell: mangler den lokale `app.wasm` (lokal utvikling uten
+wasm-bygg), henter `wasmInit.js` i stedet den deployede binæren fra GitHub
+Pages; kan heller ikke den lastes, vises en tydelig feilmelding i stedet for
+at siden regner stille feil. WASI-shimen er vendored
+(`frontend/static/vendor/wasi/`), og Leaflet er SRI-pinnet, så kjørende sider
+avhenger ikke av at CDN-er serverer uendret innhold.
 
 ### Oppdatere standard-oppsettet
 
@@ -126,12 +129,20 @@ flere kilder: `ltot = 10·log10(Σ 10^(l/10))`.
     reactor-modus uten `hs_start`).
   - `gridWorker.js` — Web Worker som regner en rad-stripe av rutenettet;
     hovedtråden kjører flere av disse parallelt (se «Simulator» over).
-  - `wasmInit.js` — delt WASI-boot, importert av både `lydnivakart.html` og
+  - `wasmInit.js` — delt WASI-boot (lokal `app.wasm`, ellers deployet fra
+    GitHub Pages), importert av `index.js`, `lydnivakart.html` og
     `gridWorker.js`.
+  - `gridGeo.js` — ren geometri (planprojeksjon, `destPoint`/`bearing`,
+    marching squares), Node-testet i `frontend/test/`.
+  - `migrering.js` — normalisering av lagrede oppsett (v1/v2/v3),
+    Node-testet i `frontend/test/`.
+  - `vendor/wasi/` — vendored WASI-shim (`@bjorn3/browser_wasi_shim@0.3.0`).
   - `default.json` — standard-oppsettet simulatoren laster ved oppstart
     (se eget avsnitt under).
+- `frontend/test/` — Node-tester for de rene JS-modulene (kjøres i CI).
 - `build.sh` — wasm-bygg → `dist/` (post-link av JSFFI-glue, wasm-opt -Oz).
-- `.github/workflows/deploy.yml` — test (nativ GHC) → wasm-bygg → GitHub Pages.
+- `.github/workflows/deploy.yml` — test (JS + nativ GHC) → wasm-bygg →
+  GitHub Pages.
 
 ## Bygge lokalt
 
@@ -139,6 +150,12 @@ flere kilder: `ltot = 10·log10(Σ 10^(l/10))`.
 
 ```sh
 cabal test all
+```
+
+### Tester (JS, Node ≥ 18)
+
+```sh
+node --test frontend/test/*.test.mjs
 ```
 
 ### WASM-bygg

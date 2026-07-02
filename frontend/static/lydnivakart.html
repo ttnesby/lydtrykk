@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Varmepumpe – lydnivåsoner på kart (NS 8175)</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" integrity="sha384-c6Rcwz4e4CITMbu/NBmnNS8yN2sC3cUElMEMfP3vqqKFp7GOYaaBBCqmaWBjmkjb" crossorigin="anonymous">
 <style>
   :root{ --ink:#23231f; --muted:#5f5e5a; --line:#e2e0d8; --bg:#faf9f5; --accent:#c0492a; --panel:#ffffff; --bad:#c4362f; }
   *{ box-sizing:border-box; }
@@ -204,8 +204,17 @@
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script>
+<!-- SRI-hasher (integrity) pinner Leaflet til nøyaktig innholdet vi har
+     verifisert – et kompromittert/endret CDN-svar blir da avvist av
+     nettleseren. WASI-shimen er vendored lokalt (se wasmInit.js). -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" integrity="sha384-NElt3Op+9NBMCYaef5HxeJmU4Xeard/Lku8ek6hoPTvYkQPh3zLIrJP7KiRocsxO" crossorigin="anonymous"></script>
+<script type="module">
+// Hele appen er én ES-modul: geometri og migrering importeres fra egne,
+// Node-testbare moduler (frontend/test/), og wasm-boot skjer nederst i samme
+// modul (top-level await).
+import { metersPerDeg, toLocal, fromLocal, destPoint, bearing, marchingSquares } from './gridGeo.js';
+import { normaliserOppsett } from './migrering.js';
+
 // Mobile sidebar toggle
 const toggleBtn=document.getElementById('toggle-sidebar');
 const sideBar=document.getElementById('side');
@@ -288,11 +297,21 @@ const KLASSER=[
   {k:'C',  navn:'Klasse C',  sub:'minstekrav'},
 ];
 const TIDSROM=[{key:'Dag',navn:'Dag 07–19'},{key:'Kveld',navn:'Kveld 19–23'},{key:'Natt',navn:'Natt 23–07'}];
-// grenser per [klasse][tidsrom] = [dag, kveld, natt]
-const GRENSE={ 'A':[35,30,25], 'B+':[38,33,28], 'B':[40,35,30], 'C':[45,40,35] };
-const ALLE_GRENSER=[25,28,30,33,35,38,40,45];   // distinkte grenser, lav (streng) → høy (mild)
-const BPLUSS=new Set([28,33,38]);                 // B+-grensene (unike for B+-raden) tegnes stiplet
-let activeLimits=new Set([28,35,40,45]);          // standard synlige soner
+// Grensetabellen hentes fra kjernen (acoustics_grense) i byggGrenser() –
+// ingen JS-kopi av NS 8175-tallene. KLASSER/TIDSROM-rekkefølgen over MÅ
+// matche Haskell-enumene (Lydklasse: A, B+, B, C / Tidsrom: Dag, Kveld,
+// Natt), for indeksene er koblingen mellom dem.
+let GRENSE=null;          // { 'A':[dag,kveld,natt], ... } – fylles av byggGrenser()
+let ALLE_GRENSER=[];      // distinkte grenser, lav (streng) → høy (mild)
+let BPLUSS=new Set();     // grenser unike for B+-raden – tegnes stiplet
+let activeLimits=new Set([28,35,40,45]);   // standard synlige soner (default.json overstyrer)
+function byggGrenser(){
+  GRENSE={};
+  KLASSER.forEach((kl,k)=>{ GRENSE[kl.k]=TIDSROM.map((_,t)=>WASM.acoustics_grense(k,t)); });
+  ALLE_GRENSER=[...new Set(Object.values(GRENSE).flat())].sort((x,y)=>x-y);
+  const andre=new Set(Object.entries(GRENSE).filter(([k])=>k!=='B+').flatMap(([,v])=>v));
+  BPLUSS=new Set(GRENSE['B+'].filter(lim=>!andre.has(lim)));
+}
 
 // Entydig fargeskala – én tydelig farge per dB-grense, ordnet streng→mild
 // (varm/rød = lav dB = streng = lang bue → kjølig/blå = mild = kort bue).
@@ -310,16 +329,25 @@ function strictestLimit(){ return activeLimits.size ? Math.min(...activeLimits) 
 // lokal app.wasm, eller den deployede fra GitHub Pages hvis lokal mangler
 // (lokal dev uten wasm-bygg). Feiler begge, viser akustikkFeilet() et banner
 // i stedet for at siden regner stille feil. Matrise/soner/rutenett rendres
-// derfor først når bootAkustikk() har fått kjernen (se modulskriptet nederst).
+// derfor først når bootAkustikk() har fått kjernen (se «akustikk-boot»
+// nederst i denne modulen). Grensetabellen hentes også fra kjernen
+// (byggGrenser over), så heller ikke NS 8175-tallene har noen JS-kopi.
 let WASM=null;
 function bootAkustikk(exports){
+  // Eldre deployet binær (fra før acoustics_grense fantes): behandles som
+  // manglende kjerne med en presis melding, i stedet for å krasje senere.
+  if(typeof exports.acoustics_grense!=='function'){
+    akustikkFeilet('app.wasm er en eldre binær uten acoustics_grense – bygg lokalt (./build.sh) eller bruk PR-previewen.');
+    return;
+  }
   WASM=exports; window.__acoustics=exports;
-  updateKilde(); renderMatrise(); setupGrid(null); loadDefaults();
+  byggGrenser();
+  updateKilde(); renderMatrise(); renderLeg(); setupGrid(null); loadDefaults();
 }
-function akustikkFeilet(){
+function akustikkFeilet(melding){
   const p=document.createElement('p');
   p.style.cssText='margin:10px 0;padding:10px 12px;border:1px solid var(--bad);border-radius:8px;color:var(--bad);background:#fff;font-size:13px;';
-  p.textContent='Beregningskjernen (WASM) kunne ikke lastes – sjekk nettilkoblingen og last siden på nytt. Uten den kan ikke lydnivåer beregnes.';
+  p.textContent=melding||'Beregningskjernen (WASM) kunne ikke lastes – sjekk nettilkoblingen og last siden på nytt. Uten den kan ikke lydnivåer beregnes.';
   document.querySelector('.side-head').after(p);
   document.getElementById('gridinfo').textContent='Rutenett utilgjengelig – beregningskjernen mangler.';
 }
@@ -332,17 +360,7 @@ function srcLevel(){
 }
 function dirGain(angleDeg){ return WASM.acoustics_dirGain(angleDeg); }
 function reqDist(angleDeg,limit){ return WASM.acoustics_reqDist(srcLevel(),limit,angleDeg); }
-function destPoint(lat,lng,brgDeg,distM){
-  const R=6378137, d=distM/R, b=brgDeg*Math.PI/180, f1=lat*Math.PI/180, l1=lng*Math.PI/180;
-  const f2=Math.asin(Math.sin(f1)*Math.cos(d)+Math.cos(f1)*Math.sin(d)*Math.cos(b));
-  const l2=l1+Math.atan2(Math.sin(b)*Math.sin(d)*Math.cos(f1),Math.cos(d)-Math.sin(f1)*Math.sin(f2));
-  return [f2*180/Math.PI,l2*180/Math.PI];
-}
-function bearing(from,to){
-  const f1=from.lat*Math.PI/180,f2=to.lat*Math.PI/180,dl=(to.lng-from.lng)*Math.PI/180;
-  const y=Math.sin(dl)*Math.cos(f2), x=Math.cos(f1)*Math.sin(f2)-Math.sin(f1)*Math.cos(f2)*Math.cos(dl);
-  return (Math.atan2(y,x)*180/Math.PI+360)%360;
-}
+// destPoint/bearing importeres fra gridGeo.js
 function lobePts(p,limit){
   const pts=[];
   for(let a=-90;a<=90;a+=6){ const r=reqDist(a,limit); pts.push(destPoint(p.latlng.lat,p.latlng.lng,p.brg+a,r)); }
@@ -469,18 +487,8 @@ let lastGrid=null;        // siste ferdigberegnede rutenett, brukt til rendering
 let interacting=false;
 const DRAG_COARSEN=3;
 
-function metersPerDeg(lat){
-  const mPerDegLat=111320;
-  return { mPerDegLat, mPerDegLon: mPerDegLat*Math.cos(lat*Math.PI/180) };
-}
-function toLocal(latlng,origin){
-  const {mPerDegLat,mPerDegLon}=metersPerDeg(origin.lat);
-  return { x:(latlng.lng-origin.lng)*mPerDegLon, y:(latlng.lat-origin.lat)*mPerDegLat };
-}
-function fromLocal(x,y,origin){
-  const {mPerDegLat,mPerDegLon}=metersPerDeg(origin.lat);
-  return L.latLng(origin.lat + y/mPerDegLat, origin.lng + x/mPerDegLon);
-}
+// metersPerDeg/toLocal/fromLocal importeres fra gridGeo.js (den lokale
+// planprojeksjonen – samme regnemåte som gridWorker.js forutsetter).
 function effectiveBounds(){
   const a=corners.sw, b=corners.ne;
   return {
@@ -670,49 +678,8 @@ function renderOverlay(g){
   overlayLayer.once('load',()=>{ if(overlayLayer._image) overlayLayer._image.style.imageRendering='pixelated'; });
 }
 
-// Marching squares: konturlinjer der rutenettverdien krysser 'threshold'.
-// Hjørnene i cellen (r,c)–(r+1,c+1) navngis a=NV b=NØ c=SØ d=SV. Sadelpunkt-
-// tilfellene (idx 5 og 10, alle fire kanter kysset) løses ved å sammenligne
-// cellens midtverdi (snitt av hjørnene) mot grensen – standardtriks for å
-// unngå tvetydig sammenkobling av linjene.
-function marchingSquares(grid,rows,cols,threshold){
-  const segments=[];
-  const at=(r,c)=>grid[r*cols+c];
-  const lerp=(v0,v1)=>(threshold-v0)/(v1-v0);
-  for(let r=0;r<rows-1;r++){
-    for(let c=0;c<cols-1;c++){
-      const d=at(r,c), cc=at(r,c+1), b=at(r+1,c+1), a=at(r+1,c);
-      const idx=(a>threshold?8:0)|(b>threshold?4:0)|(cc>threshold?2:0)|(d>threshold?1:0);
-      if(idx===0||idx===15) continue;
-      const left=()=>[r+lerp(d,a), c];
-      const top=()=>[r+1, c+lerp(a,b)];
-      const right=()=>[r+lerp(cc,b), c+1];
-      const bottom=()=>[r, c+lerp(d,cc)];
-      const pair=(e1,e2)=>segments.push([e1(),e2()]);
-      switch(idx){
-        case 1: case 14: pair(left,bottom); break;
-        case 2: case 13: pair(bottom,right); break;
-        case 3: case 12: pair(left,right); break;
-        case 4: case 11: pair(top,right); break;
-        case 6: case 9: pair(top,bottom); break;
-        case 7: case 8: pair(left,top); break;
-        case 5: {
-          const midt=(a+b+cc+d)/4;
-          if(midt>threshold){ pair(left,top); pair(right,bottom); }
-          else { pair(top,right); pair(left,bottom); }
-          break;
-        }
-        case 10: {
-          const midt=(a+b+cc+d)/4;
-          if(midt>threshold){ pair(top,right); pair(left,bottom); }
-          else { pair(left,top); pair(right,bottom); }
-          break;
-        }
-      }
-    }
-  }
-  return segments;
-}
+// marchingSquares importeres fra gridGeo.js; segmentene er i (rad, kolonne)-
+// koordinater og skaleres til geografiske punkter her.
 function segmentsToLatLngs(segments,res,sw){
   return segments.map(([p0,p1])=>[
     fromLocal(p0[1]*res, p0[0]*res, sw),
@@ -813,40 +780,29 @@ function snapshot(){
     view:{center:[c.lat,c.lng],zoom:map.getZoom()},
   };
 }
+// Formattoleranse/migrering (v1/v2/v3) ligger i normaliserOppsett
+// (migrering.js, Node-testet) – restore() bare anvender det normaliserte
+// oppsettet på DOM/kart.
 function restore(d){
-  if(!d || d.format!=='lydnivakart'){ alert('Ukjent filformat – forventet et lydnivakart-oppsett.'); return; }
+  const opp=normaliserOppsett(d);
+  if(!opp){ alert('Ukjent filformat – forventet et lydnivakart-oppsett.'); return; }
   // tøm nåværende tilstand
   [...pumps].forEach(p=>removePump(p.id));
   pumpNo=0; sel=null;
-  const s=d.settings||{};
-  // lydkilde: v2/v3 (lyd/vegg/kab) eller migrering fra v1 (mode/mount)
-  let lyd, vegg, kab;
-  if(s.lyd!=null){ lyd=s.lyd; vegg=!!s.vegg; kab=s.kab||0; }
-  else { lyd=parseFloat(s.mode)||50; vegg=String(s.mount)==='3'; kab=0; }   // gammelt format
-  document.getElementById('lyd').value=lyd;
-  document.getElementById('vegg').checked=vegg;
-  document.getElementById('kab').value=kab;
-  // soner: v2/v3 (limits) eller v1 (bands med navngitte nøkler)
-  if(Array.isArray(s.limits)){ activeLimits=new Set(s.limits); }
-  else if(s.bands){
-    const map5={natBp:28,nattB:30,nattC:35,kvC:40,dagC:45};
-    activeLimits=new Set(Object.keys(map5).filter(k=>s.bands[k]).map(k=>map5[k]));
-  }   // mangler begge → behold nåværende activeLimits
-  // standardretning
-  if(s.defdir!=null){ const dd=document.getElementById('defdir');
-    dd.value=s.defdir; document.getElementById('defdirv').textContent=s.defdir+'°'; }
-  // karttype
-  if(s.base!=null) setBase(s.base);
-  // pumper (eldre filer kan ha et 'nabos'-felt – det ignoreres stille, siden
-  // rutenettet nå erstatter enkeltpunkt-sjekken)
-  (d.pumps||[]).forEach(p=>{ addPump(L.latLng(p.lat,p.lng),p.brg,p.num); });
+  document.getElementById('lyd').value=opp.lyd;
+  document.getElementById('vegg').checked=opp.vegg;
+  document.getElementById('kab').value=opp.kab;
+  if(opp.limits!=null) activeLimits=new Set(opp.limits);   // null → behold nåværende
+  if(opp.defdir!=null){ const dd=document.getElementById('defdir');
+    dd.value=opp.defdir; document.getElementById('defdirv').textContent=opp.defdir+'°'; }
+  if(opp.base!=null) setBase(opp.base);
+  opp.pumps.forEach(p=>{ addPump(L.latLng(p.lat,p.lng),p.brg,p.num); });
   pumpNo=pumps.reduce((m,p)=>Math.max(m,p.num),0);
   sel=null; positionControls();
   // rutenett: eksplisitt lagret (v3), ellers tilpasset pumpene som nettopp ble lastet
-  setupGrid(d.grid||null);
-  setGridOn(d.grid&&d.grid.on!=null ? d.grid.on : true);
-  // kartutsnitt
-  if(d.view&&d.view.center) map.setView(d.view.center,d.view.zoom);
+  setupGrid(opp.grid);
+  setGridOn(opp.gridOn);
+  if(opp.view) map.setView(opp.view.center,opp.view.zoom);
   redrawAll();
 }
 function stamp(){ const p=n=>String(n).padStart(2,'0'); const t=new Date();
@@ -866,7 +822,7 @@ document.getElementById('loadfile').addEventListener('change',e=>{
   e.target.value='';   // tillat å laste samme fil på nytt
 });
 
-renderLeg(); updateCounts();   // matrise/rutenett/defaults rendres av bootAkustikk() når kjernen er klar
+updateCounts();   // matrise/legende/rutenett/defaults rendres av bootAkustikk() når kjernen er klar
 
 // ---- default-oppsett (hybrid: live fra GitHub raw, faller tilbake på bundlet kopi) ----
 // Rediger frontend/static/default.json på main for å endre standardverdiene for alle.
@@ -884,22 +840,21 @@ async function loadDefaults(){
 }
 // loadDefaults() kalles fra bootAkustikk() – restore() regner soner/rutenett
 // og trenger derfor kjernen.
-</script>
 
-<!-- Akustikk-kjernen: samme app.wasm som NS 8175-siden (lokal, eller deployet
-     fra GitHub Pages hvis lokal mangler – se wasmInit.js). Init kjører
-     reactor-modus uten hs_start, så Miso-kalkulatoren IKKE monteres her. -->
-<script type="module">
-  // Dynamisk import: en feilet statisk import (f.eks. manglende
-  // ghc_wasm_jsffi.js uten et WASM-bygg) ville ellers ikke blitt fanget av
-  // try/catch under, siden modulgrafen løses før scriptet kjører.
-  try {
-    const { initAcoustics } = await import("./wasmInit.js");
-    bootAkustikk(await initAcoustics());
-  } catch (e) {
-    console.error("WASM-kjernen kunne ikke lastes:", e);
-    akustikkFeilet();
-  }
+// ---- akustikk-boot ----
+// Samme app.wasm som NS 8175-siden (lokal, eller deployet fra GitHub Pages
+// hvis lokal mangler – se wasmInit.js). Init kjører reactor-modus uten
+// hs_start, så Miso-kalkulatoren IKKE monteres her. Dynamisk import: en
+// feilet statisk import (f.eks. manglende ghc_wasm_jsffi.js uten et
+// WASM-bygg) ville ellers ikke blitt fanget av try/catch, siden modulgrafen
+// løses før scriptet kjører.
+try {
+  const { initAcoustics } = await import("./wasmInit.js");
+  bootAkustikk(await initAcoustics());
+} catch (e) {
+  console.error("WASM-kjernen kunne ikke lastes:", e);
+  akustikkFeilet();
+}
 </script>
 </body>
 </html>
