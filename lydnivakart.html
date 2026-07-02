@@ -306,11 +306,23 @@ function strictestLimit(){ return activeLimits.size ? Math.min(...activeLimits) 
 
 // ---- akustikk-kjerne ----
 // Sannhetskilden er Lyd.Beregning (WASM), delt med NS 8175-siden og med
-// gridWorker.js. JS-funksjonene nedenfor er rene fallbacks med NØYAKTIG samme
-// modell (cosinus-karakteristikk: 0 dB rett frem, −5 dB ved 90°), så tallene
-// er like også om WASM ikke lastes.
+// gridWorker.js. Det finnes ingen JS-kopi av formlene: wasmInit.js laster
+// lokal app.wasm, eller den deployede fra GitHub Pages hvis lokal mangler
+// (lokal dev uten wasm-bygg). Feiler begge, viser akustikkFeilet() et banner
+// i stedet for at siden regner stille feil. Matrise/soner/rutenett rendres
+// derfor først når bootAkustikk() har fått kjernen (se modulskriptet nederst).
 let WASM=null;
-window.__setAcoustics=(exports)=>{ WASM=exports; window.__acoustics=exports; redrawAll(); };
+function bootAkustikk(exports){
+  WASM=exports; window.__acoustics=exports;
+  updateKilde(); renderMatrise(); setupGrid(null); loadDefaults();
+}
+function akustikkFeilet(){
+  const p=document.createElement('p');
+  p.style.cssText='margin:10px 0;padding:10px 12px;border:1px solid var(--bad);border-radius:8px;color:var(--bad);background:#fff;font-size:13px;';
+  p.textContent='Beregningskjernen (WASM) kunne ikke lastes – sjekk nettilkoblingen og last siden på nytt. Uten den kan ikke lydnivåer beregnes.';
+  document.querySelector('.side-head').after(p);
+  document.getElementById('gridinfo').textContent='Rutenett utilgjengelig – beregningskjernen mangler.';
+}
 
 function srcLevel(){
   const lyd=Math.min(70,Math.max(40,parseFloat(document.getElementById('lyd').value)||0));
@@ -318,12 +330,8 @@ function srcLevel(){
   const kab=Math.max(0,parseFloat(document.getElementById('kab').value)||0);
   return lyd+vegg-kab;
 }
-function dirGainJS(angleDeg){ const a=Math.min(Math.abs(angleDeg),90); return -5*(1-Math.cos(a*Math.PI/180)); }
-function dirGain(angleDeg){ return WASM ? WASM.acoustics_dirGain(angleDeg) : dirGainJS(angleDeg); }
-function reqDist(angleDeg,limit){
-  return WASM ? WASM.acoustics_reqDist(srcLevel(),limit,angleDeg)
-              : Math.pow(10,(srcLevel()+dirGainJS(angleDeg)-limit)/20);
-}
+function dirGain(angleDeg){ return WASM.acoustics_dirGain(angleDeg); }
+function reqDist(angleDeg,limit){ return WASM.acoustics_reqDist(srcLevel(),limit,angleDeg); }
 function destPoint(lat,lng,brgDeg,distM){
   const R=6378137, d=distM/R, b=brgDeg*Math.PI/180, f1=lat*Math.PI/180, l1=lng*Math.PI/180;
   const f2=Math.asin(Math.sin(f1)*Math.cos(d)+Math.cos(f1)*Math.sin(d)*Math.cos(b));
@@ -418,6 +426,7 @@ function addPump(latlng,brg,num){
 // rutenettet på ville de bare vært clutter oppå det samlede bildet, og
 // ekvidistansen for én enkelt kilde er uansett identisk med dens egen halvbue.
 function drawPump(p){
+  if(!WASM) return;   // før bootAkustikk (eller etter feilet boot) finnes ingen kjerne å regne med
   ALLE_GRENSER.forEach(lim=>{
     const z=p.zones[lim];
     if(gridOn || !activeLimits.has(lim)){
@@ -585,7 +594,9 @@ function computeGrid(rows,cols,res,origin){
         w.removeEventListener('messageerror',onErr);
         if(timeoutId!=null) clearTimeout(timeoutId);
       };
-      const onMsg=e=>{ if(e.data.reqId!==reqId) return; cleanup(); resolve(e.data); };
+      const onMsg=e=>{ if(e.data.reqId!==reqId) return; cleanup();
+        if(e.data.error){ document.getElementById('gridinfo').textContent='Rutenett utilgjengelig – beregningskjernen kunne ikke lastes i bakgrunnsarbeiderne.'; resolve(null); return; }
+        resolve(e.data); };
       const onErr=e=>{ cleanup(); console.warn('Grid-worker feilet – hopper over denne runden:',e.message||e); resolve(null); };
       timeoutId=setTimeout(()=>{ cleanup(); console.warn('Grid-worker brukte for lang tid – hopper over denne runden.'); resolve(null); },15000);
       w.addEventListener('message',onMsg);
@@ -733,7 +744,7 @@ function updateCounts(){
   el.textContent=`${pumps.length} utedel${pumps.length===1?'':'er'}`;
 }
 function renderMatrise(){
-  const el=document.getElementById('matrise'); if(!el) return;
+  const el=document.getElementById('matrise'); if(!el||!WASM) return;
   el.innerHTML='';
   const cell=(cls,txt)=>{ const d=document.createElement('div'); d.className=cls; if(txt) d.textContent=txt; return d; };
   el.appendChild(cell('mhode mhjorne',''));
@@ -855,7 +866,7 @@ document.getElementById('loadfile').addEventListener('change',e=>{
   e.target.value='';   // tillat å laste samme fil på nytt
 });
 
-updateKilde(); renderMatrise(); renderLeg(); updateCounts(); setupGrid(null);   // første visning (JS-fallback); WASM-init kaller redrawAll() når klar
+renderLeg(); updateCounts();   // matrise/rutenett/defaults rendres av bootAkustikk() når kjernen er klar
 
 // ---- default-oppsett (hybrid: live fra GitHub raw, faller tilbake på bundlet kopi) ----
 // Rediger frontend/static/default.json på main for å endre standardverdiene for alle.
@@ -871,20 +882,23 @@ async function loadDefaults(){
     catch(e2){ console.warn('Ingen default.json funnet – starter tomt:',e2); return; } }
   try{ restore(d); }catch(e){ console.warn('Kunne ikke bruke default-oppsett:',e); }
 }
-loadDefaults();    // legger inn standard pumper/soner/utsnitt ved hver (hard) refresh
+// loadDefaults() kalles fra bootAkustikk() – restore() regner soner/rutenett
+// og trenger derfor kjernen.
 </script>
 
-<!-- Akustikk-kjernen: samme app.wasm som NS 8175-siden. Init kjører reactor-modus
-     uten hs_start, så Miso-kalkulatoren IKKE monteres inn i denne siden. -->
+<!-- Akustikk-kjernen: samme app.wasm som NS 8175-siden (lokal, eller deployet
+     fra GitHub Pages hvis lokal mangler – se wasmInit.js). Init kjører
+     reactor-modus uten hs_start, så Miso-kalkulatoren IKKE monteres her. -->
 <script type="module">
   // Dynamisk import: en feilet statisk import (f.eks. manglende
   // ghc_wasm_jsffi.js uten et WASM-bygg) ville ellers ikke blitt fanget av
   // try/catch under, siden modulgrafen løses før scriptet kjører.
   try {
     const { initAcoustics } = await import("./wasmInit.js");
-    window.__setAcoustics(await initAcoustics());
+    bootAkustikk(await initAcoustics());
   } catch (e) {
-    console.warn("WASM-kjernen kunne ikke lastes – bruker JS-fallback:", e);
+    console.error("WASM-kjernen kunne ikke lastes:", e);
+    akustikkFeilet();
   }
 </script>
 </body>
