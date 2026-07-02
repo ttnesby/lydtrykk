@@ -19,6 +19,7 @@ common options
       "-optl-Wl,--export=acoustics_reqDist"
       "-optl-Wl,--export=acoustics_levelAt"
       "-optl-Wl,--export=acoustics_dbSum"
+      "-optl-Wl,--export=acoustics_grense"
     cpp-options:
       -DWASM
     build-depends:

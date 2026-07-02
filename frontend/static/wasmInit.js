@@ -8,7 +8,10 @@
 // application/wasm). Matematikken kommer dermed alltid fra Lyd.Beregning;
 // det finnes ingen JS-kopi av formlene. Kan ingen av kildene lastes, kastes
 // feilen videre til kalleren, som viser en synlig feilmelding.
-import { WASI, OpenFile, File, ConsoleStdout } from "https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.3.0/dist/index.js";
+// WASI-shimen er vendored (vendor/wasi/ = dist-filene fra
+// @bjorn3/browser_wasi_shim@0.3.0), så wasm-boot ikke avhenger av at
+// jsdelivr er oppe. Oppgradering: last ned nye dist-filer til samme mappe.
+import { WASI, OpenFile, File, ConsoleStdout } from "./vendor/wasi/index.js";
 
 const REMOTE_BASE = "https://ttnesby.github.io/lydtrykk/";
 

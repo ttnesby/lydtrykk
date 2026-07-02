@@ -42,6 +42,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # JS-tester (gridGeo/migrering) først – raske, og feiler før GHC-oppsettet
+      # rekker å starte. Node er forhåndsinstallert på ubuntu-latest.
+      - name: Run JS tests
+        run: node --test frontend/test/*.test.mjs
+
       - name: Setup native GHC
         id: setup
         uses: haskell-actions/setup@v2
