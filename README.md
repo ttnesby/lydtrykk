@@ -65,8 +65,11 @@ Simulatoren deler **samme akustikk-kjerne** (`Lyd.Beregning`) som NS 8175-siden,
 eksponert fra `app.wasm` via synkrone JSFFI-eksporter (`acoustics_dirGain`,
 `acoustics_reqDist`, `acoustics_levelAt`, `acoustics_dbSum`). Både hovedtråden
 og hver grid-worker instansierer WASM-kjernen via en delt boot-sekvens
-(`wasmInit.js`), så tallene kan ikke divergere. En ren JS-fallback med
-identisk modell brukes dersom WASM ikke lastes noe sted.
+(`wasmInit.js`), så tallene kan ikke divergere. Matematikken finnes **kun** i
+Haskell: mangler den lokale `app.wasm` (lokal utvikling uten wasm-bygg),
+henter `wasmInit.js` i stedet den deployede binæren fra GitHub Pages; kan
+heller ikke den lastes, vises en tydelig feilmelding i stedet for at siden
+regner stille feil.
 
 ### Oppdatere standard-oppsettet
 
