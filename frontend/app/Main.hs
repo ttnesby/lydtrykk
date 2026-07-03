@@ -5,6 +5,9 @@
 module Main (main) where
 
 import Lyd.Beregning
+#ifdef WASM
+import Lyd.Felt
+#endif
 import Miso
 import qualified Miso.Html as H
 import qualified Miso.Html.Event as E
@@ -75,8 +78,16 @@ foreign export javascript "acoustics_levelAt sync" js_levelAt :: Double -> Doubl
 foreign export javascript "acoustics_dbSum sync" js_dbSum :: JSVal -> Double
 foreign export javascript "acoustics_grense sync" js_grense :: Int -> Int -> Double
 
+-- Batch-eksport for rutenettet (gridWorker.js): hele celle-løkken kjøres i
+-- Haskell ('Lyd.Felt'), så én worker-stripe koster ett eksport-kall i stedet
+-- for celler·(pumper+1). IO er trygt i en sync-eksport her: kroppen gjør kun
+-- unsafe imports (array-skriving), ingen blokkering.
+foreign export javascript "acoustics_gridStripe sync"
+  js_gridStripe :: Double -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
+
 foreign import javascript unsafe "$1.length" js_arrLen :: JSVal -> Int
 foreign import javascript unsafe "$1[$2]" js_arrAt :: JSVal -> Int -> Double
+foreign import javascript unsafe "$1[$2] = $3" js_arrSett :: JSVal -> Int -> Double -> IO ()
 
 -- | Frittstående kilde med 1 m referanse; 'src' inkluderer alt nivå (også
 -- ev. veggtillegg), så monteringen settes til 'Frittstaaende' her.
@@ -106,6 +117,25 @@ js_levelAt src r vinkel =
 -- | Logaritmisk sum av nivåene i en JS-array. = 'kumulativ'.
 js_dbSum :: JSVal -> Double
 js_dbSum arr = dBA (kumulativ [Desibel (js_arrAt arr i) | i <- [0 .. js_arrLen arr - 1]])
+
+-- | Fyller 'ut' (Float64Array med (radSlutt−radStart)·kolonner elementer)
+-- med kumulativt lydnivå per rutenettcelle, radmajor. = 'rutenettStripe'.
+-- 'pumperXYB' er en flat stride-3-array [x0,y0,retning0, x1,y1,retning1, …]
+-- i lokale plan-koordinater (meter fra rutenettets SV-hjørne, retning i
+-- grader 0° = nord, medurs) — samme konvensjon som gridWorker.js.
+js_gridStripe :: Double -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
+js_gridStripe src pumperXYB radStart radSlutt kolonner celleM ut =
+  sequence_ (zipWith (js_arrSett ut) [0 ..] verdier)
+  where
+    verdier = rutenettStripe (simKilde src) plasserte stripe
+    stripe = Stripe radStart radSlutt kolonner (Meter celleM)
+    antall = js_arrLen pumperXYB `div` 3
+    plasserte =
+      [ PlassertKilde
+          (Punkt (js_arrAt pumperXYB (i * 3)) (js_arrAt pumperXYB (i * 3 + 1)))
+          (js_arrAt pumperXYB (i * 3 + 2))
+      | i <- [0 .. antall - 1]
+      ]
 
 -- | Grenseverdi (dBA) fra NS 8175-tabellen, = 'grense'. Indeksene følger
 -- enum-rekkefølgen: klasse 0–3 = A, B+, B, C; tidsrom 0–2 = Dag, Kveld, Natt

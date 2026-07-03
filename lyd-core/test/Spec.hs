@@ -1,6 +1,7 @@
 module Main (main) where
 
 import Lyd.Beregning
+import Lyd.Felt
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
@@ -12,7 +13,7 @@ tests :: TestTree
 tests =
   testGroup
     "lyd-core"
-    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper]
+    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper, feltTests]
 
 grenseTests :: TestTree
 grenseTests =
@@ -274,6 +275,91 @@ simulatorEgenskaper =
         forAll (choose (0, 90)) $ \a ->
           vinkelkorreksjon (vinkelKlampet a) == vinkelkorreksjon (vinkelKlampet (negate a))
     ]
+
+-- | Lydfeltet over rutenettet ('Lyd.Felt') — regnekjernen bak kart-
+-- simulatorens rutenett. Gylne verdier gjenbruker fasiten fra
+-- 'lydnivaaKrysssjekk' (53 dBA frittstående, r0 = 1).
+feltTests :: TestTree
+feltTests =
+  testGroup
+    "lydfelt (rutenett, Lyd.Felt)"
+    [ testCase "pumpe i origo mot nord: punkt 5 m foran → 39,02" $
+        rund2 (dBA (nivaaIPunkt (frittstaaende 53) [iOrigoMotNord] (Punkt 0 5)))
+          @?= 39.02,
+      testCase "pumpe i origo mot nord: punkt 5 m til siden (90°) → 34,02" $
+        rund2 (dBA (nivaaIPunkt (frittstaaende 53) [iOrigoMotNord] (Punkt 5 0)))
+          @?= 34.02,
+      testCase "to samlokaliserte pumper = én + 10·log10 2" $
+        assertBool "≈ +3,01 dB" $
+          abs
+            ( dBA (nivaaIPunkt (frittstaaende 53) [iOrigoMotNord, iOrigoMotNord] (Punkt 0 5))
+                - (dBA (nivaaIPunkt (frittstaaende 53) [iOrigoMotNord] (Punkt 0 5)) + 10 * logBase 10 2)
+            )
+            < 1e-9,
+      testCase "ingen pumper → -Infinity" $
+        let n = dBA (nivaaIPunkt (frittstaaende 53) [] (Punkt 0 0))
+         in assertBool "-Infinity" (isInfinite n && n < 0),
+      testCase "avstand under 1 m klampes til 1 m" $
+        nivaaIPunkt (frittstaaende 53) [iOrigoMotNord] (Punkt 0 0.5)
+          @?= nivaaIPunkt (frittstaaende 53) [iOrigoMotNord] (Punkt 0 1),
+      testCase "retningsavvik: retning 350° mot punkt rett nord → 10°" $
+        assertBool "≈ 10°" $
+          abs (retningsavvik (PlassertKilde (Punkt 0 0) 350) (Punkt 0 5) - 10) < 1e-9,
+      testCase "punkt rett bak: avvik 180°, dempes som 90° (vinkelKlampet)" $ do
+        assertBool "≈ 180°" $
+          abs (retningsavvik iOrigoMotNord (Punkt 0 (-5)) - 180) < 1e-9
+        -- toleranse: kumulativ-rundturen (10**/log10) er ikke bit-eksakt
+        assertBool "≈ nivå ved 90°" $
+          abs
+            ( dBA (nivaaIPunkt (frittstaaende 53) [iOrigoMotNord] (Punkt 0 (-5)))
+                - dBA (lydnivaa (frittstaaende 53) (vinkelKlampet 90) (Meter 5))
+            )
+            < 1e-9,
+      testProperty "rutenettStripe = nivaaIPunkt celle for celle, radmajor" $
+        forAll genFeltOppsett $ \(kilde, plasserte) ->
+          forAll genStripe $ \stripe ->
+            let Meter celle = stCelleM stripe
+                forventet =
+                  [ dBA (nivaaIPunkt kilde plasserte (Punkt (fromIntegral kol * celle) (fromIntegral rad * celle)))
+                  | rad <- [stRadStart stripe .. stRadSlutt stripe - 1],
+                    kol <- [0 .. stKolonner stripe - 1]
+                  ]
+             in rutenettStripe kilde plasserte stripe === forventet,
+      testProperty "stripe-lengde = rader · kolonner" $
+        forAll genFeltOppsett $ \(kilde, plasserte) ->
+          forAll genStripe $ \stripe ->
+            length (rutenettStripe kilde plasserte stripe)
+              === (stRadSlutt stripe - stRadStart stripe) * stKolonner stripe,
+      testProperty "retningsavvik periodisk i retning (+360°)" $
+        forAll genPlassert $ \p ->
+          forAll genPunkt $ \pt ->
+            abs
+              ( retningsavvik p pt
+                  - retningsavvik p {pkRetning = pkRetning p + 360} pt
+              )
+              < 1e-9,
+      testProperty "kumulativt punktnivå >= sterkeste enkeltpumpe" $
+        forAll genFeltOppsett $ \(kilde, plasserte) ->
+          not (null plasserte) ==>
+            forAll genPunkt $ \pt ->
+              dBA (nivaaIPunkt kilde plasserte pt)
+                >= maximum [dBA (nivaaIPunkt kilde [p] pt) | p <- plasserte] - 1e-9
+    ]
+  where
+    iOrigoMotNord = PlassertKilde (Punkt 0 0) 0
+    genPunkt = Punkt <$> choose (-50, 50) <*> choose (-50, 50)
+    -- Retninger også utenfor 0–360, som 'retningsavvik' skal tåle.
+    genPlassert = PlassertKilde <$> genPunkt <*> choose (-360, 720)
+    genFeltOppsett = do
+      lp0 <- choose (40, 70)
+      plasserte <- listOf genPlassert
+      pure (frittstaaende lp0, plasserte)
+    genStripe = do
+      radStart <- choose (0, 20)
+      rader <- choose (1, 8)
+      kolonner <- choose (1, 12)
+      celle <- choose (0.5, 5)
+      pure (Stripe radStart (radStart + rader) kolonner (Meter celle))
 
 kumulativTests :: TestTree
 kumulativTests =
