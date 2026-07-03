@@ -84,25 +84,33 @@ limit table (4 classes A/B+/B/C × 3 tidsrom, offsets 10/7/5/0 dBA from the
 class-C minimum), the free-field point-source model (inverse-square + cosine
 directional correction), its inverse (level → distance), cumulative
 logarithmic summation for multiple sources, and required-cabinet-attenuation.
-Everything else in the repo — the calculator UI, the map simulator, and the
-grid workers — is a thin caller of this module. `lyd-core/test/Spec.hs` pins
-it down with golden values (from a verified reference notebook), a round-trip
-QuickCheck property (`lydnivaa (avstand lp) == lp`), and monotonicity
-properties. Change the model here, and check tests — the JS side only *calls*
-the core (via WASM), it never re-implements it.
+`lyd-core/src/Lyd/Felt.hs` builds on it with the map simulator's grid field:
+placed sources in a local plane (bearing 0° = north, clockwise), per-point
+cumulative level with the 1 m distance clamp, and the row-stripe loop
+(`rutenettStripe`) that `acoustics_gridStripe` exposes — simulator policy
+deliberately kept out of `Beregning`. Everything else in the repo — the
+calculator UI, the map simulator, and the grid workers — is a thin caller of
+these modules. `lyd-core/test/Spec.hs` pins them down with golden values
+(from a verified reference notebook), a round-trip QuickCheck property
+(`lydnivaa (avstand lp) == lp`), and monotonicity properties. Change the
+model here, and check tests — the JS side only *calls* the core (via WASM),
+it never re-implements it.
 
 ### WASM export surface (`frontend/app/Main.hs`)
 
 Under `#ifdef WASM` (set via `cpp-options: -DWASM` only when
-`arch(wasm32)`, see `frontend/frontend.cabal`), `Main.hs` exports five
-*synchronous* JSFFI functions layered directly on `Lyd.Beregning`:
+`arch(wasm32)`, see `frontend/frontend.cabal`), `Main.hs` exports six
+*synchronous* JSFFI functions layered directly on `Lyd.Beregning`/`Lyd.Felt`:
 `acoustics_dirGain`, `acoustics_reqDist`, `acoustics_levelAt`,
-`acoustics_dbSum`, and `acoustics_grense` (limit table by clamped
+`acoustics_dbSum`, `acoustics_grense` (limit table by clamped
 class/tidsrom enum indices — the map page builds its whole `GRENSE` matrix
 from this at boot, so the NS 8175 numbers have no JS copy either; the
 `KLASSER`/`TIDSROM` array order in `lydnivakart.html` must match the Haskell
-enum order). Synchronous exports (the `" sync"` suffix in the
-`foreign export javascript` declarations) are required because both
+enum order), and `acoustics_gridStripe` (the batch grid call: pumps as a flat
+stride-3 Float64Array, results written into a JS-allocated Float64Array via a
+`$1[$2] = $3` unsafe import — one export call per worker row-stripe instead
+of cells×(pumps+1) scalar calls). Synchronous exports (the `" sync"` suffix
+in the `foreign export javascript` declarations) are required because both
 `lydnivakart.html` and `gridWorker.js` call them inside tight draw/compute
 loops — an async/Promise-based export would be unworkable there. The linker
 flags that actually expose these symbols from the wasm binary live in
@@ -164,7 +172,11 @@ of each contour is readable without map-reading habits.
   `import()`, not static — a static import failure would otherwise prevent
   `self.onmessage` from ever being registered and hang the worker forever).
   Rows are split contiguously across the pool; each worker returns a
-  transferable `Float64Array`.
+  transferable `Float64Array`. A worker computes its stripe with a single
+  `acoustics_gridStripe` call (the cell loop runs in Haskell, `Lyd.Felt`);
+  if the loaded binary predates that export (e.g. the deployed fallback
+  binary), it falls back to the equivalent per-cell
+  `acoustics_levelAt`/`acoustics_dbSum` loop.
 - **Coordinates**: grid math uses a local planar (equirectangular) projection
   from the grid's SW corner, *not* Leaflet's haversine helpers — cheap and
   accurate enough at lot/neighborhood scale, and avoids needing Leaflet
