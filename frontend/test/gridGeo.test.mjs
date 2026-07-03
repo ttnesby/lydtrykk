@@ -2,7 +2,7 @@
 // Kjøres med Node sin innebygde testrunner: `node --test frontend/test`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { metersPerDeg, toLocal, fromLocal, destPoint, bearing, marchingSquares } from '../static/gridGeo.js';
+import { metersPerDeg, toLocal, fromLocal, destPoint, bearing, marchingSquares, boundarySegments } from '../static/gridGeo.js';
 
 const ORIGO = { lat: 59.65, lng: 10.809 };   // samme strøk som CENTER i kartet
 
@@ -85,4 +85,70 @@ test('marchingSquares: antall segmenter er symmetrisk om terskelen', () => {
   const inv = new Float64Array([...grid].map(v => 10 - v));
   const under = marchingSquares(inv, 3, 3, 5);
   assert.equal(over.length, under.length);
+});
+
+// boundarySegments-tester: konturens fortsettelse langs rutenettkanten.
+
+test('boundarySegments: felt helt under grensen gir ingen kantsegmenter', () => {
+  assert.deepEqual(boundarySegments(new Float64Array([1, 1, 1, 1]), 2, 2, 5), []);
+});
+
+test('boundarySegments: felt helt over grensen tegner hele omkretsen', () => {
+  // 2×2 med alt over grensen → ett fullt segment per kant (sør, nord, vest, øst).
+  const segs = boundarySegments(new Float64Array([9, 9, 9, 9]), 2, 2, 5);
+  assert.deepEqual(segs, [
+    [[0, 0], [0, 1]],
+    [[1, 0], [1, 1]],
+    [[0, 0], [1, 0]],
+    [[0, 1], [1, 1]],
+  ]);
+});
+
+test('boundarySegments: kryssing på kanten interpoleres lineært', () => {
+  // Sørkanten går fra 0 (SV) til 10 (SØ) med grense 5 → segment fra midtpunktet
+  // [0, 0.5] til hjørnet [0, 1]. Østkanten fra 10 (SØ) til 0 (NØ) → [0,1]–[0.5,1].
+  const grid = new Float64Array([
+    0, 10,
+    0, 0,
+  ]);
+  const segs = boundarySegments(grid, 2, 2, 5);
+  assert.deepEqual(segs, [
+    [[0, 0.5], [0, 1]],
+    [[0, 1], [0.5, 1]],
+  ]);
+});
+
+test('boundarySegments: inset rykker segmentene innover og klemmer hjørnene', () => {
+  // 2×2 helt over grensen med inset 0.2 → omkretsen tegnes som et rektangel
+  // 0.2 innenfor kanten, uten haler forbi hjørnene.
+  const segs = boundarySegments(new Float64Array([9, 9, 9, 9]), 2, 2, 5, 0.2);
+  assert.deepEqual(segs, [
+    [[0.2, 0.2], [0.2, 0.8]],
+    [[0.8, 0.2], [0.8, 0.8]],
+    [[0.2, 0.2], [0.8, 0.2]],
+    [[0.2, 0.8], [0.8, 0.8]],
+  ]);
+  // Uforsvarlig stort inset klemmes til midten i stedet for å vrenge rektangelet.
+  for (const [p0, p1] of boundarySegments(new Float64Array([9, 9, 9, 9]), 2, 2, 5, 5)) {
+    assert.deepEqual(p0, [0.5, 0.5]);
+    assert.deepEqual(p1, [0.5, 0.5]);
+  }
+});
+
+test('boundarySegments: kantpunktene møter marching squares-konturen', () => {
+  // Halvplan over grensen (østre halvdel av 3×3) → marching squares gir en
+  // vertikal kontur som ender åpent på sør- og nordkanten; kantsegmentenes
+  // interpolerte endepunkter skal treffe nøyaktig de samme punktene.
+  const grid = new Float64Array([
+    0, 0, 10,
+    0, 0, 10,
+    0, 0, 10,
+  ]);
+  const ms = marchingSquares(grid, 3, 3, 5);
+  const kant = boundarySegments(grid, 3, 3, 5);
+  const punkt = segs => segs.flat().map(([r, c]) => `${r},${c}`);
+  const msEnder = punkt(ms).filter(p => p.startsWith('0,') || p.startsWith('2,'));
+  for (const p of msEnder) {
+    assert.ok(punkt(kant).includes(p), `kantsegmentene mangler konturens endepunkt ${p}`);
+  }
 });
