@@ -2,10 +2,14 @@
 // Hovedtråden holder en pool av slike workere (se scheduleGrid/computeGrid i
 // lydnivakart.html) – hver med sin egen WASM-instans, så beregningen skjer i
 // ekte parallell på flere kjerner. Bruker nøyaktig samme akustikk-kjerne
-// (Lyd.Beregning via WASM) som resten av appen; wasmInit.js henter deployet
-// app.wasm fra GitHub Pages hvis den lokale mangler. Det finnes ingen
-// JS-kopi av formlene – kan kjernen ikke lastes, svares det med error, og
-// hovedtråden hopper over runden i stedet for å regne stille feil.
+// (Lyd.Beregning/Lyd.Felt via WASM) som resten av appen; wasmInit.js henter
+// deployet app.wasm fra GitHub Pages hvis den lokale mangler. Det finnes
+// ingen JS-kopi av formlene – kan kjernen ikke lastes, svares det med error,
+// og hovedtråden hopper over runden i stedet for å regne stille feil.
+// Hele stripen regnes normalt med ETT kall til acoustics_gridStripe (hele
+// celle-løkken ligger i Haskell, Lyd.Felt) – mangler eksporten (eldre
+// deployet binær, før den når main), brukes per-celle-løkken under som
+// fallback med nøyaktig samme resultat, bare flere WASM-kall.
 // Dynamisk import (ikke statisk) slik at en feil her – f.eks. i lokal dev uten
 // et WASM-bygg, der ghc_wasm_jsffi.js ikke finnes – ikke stopper hele modulen
 // fra å laste. En feilet statisk import ville hindret 'self.onmessage' under i
@@ -33,26 +37,36 @@ self.onmessage = async (e) => {
 
   const rows = rowEnd - rowStart;
   const values = new Float64Array(rows * cols);
-  const levels = new Float64Array(pumps.length);
 
-  for (let row = rowStart; row < rowEnd; row++) {
-    const y = row * cellSizeM;
-    for (let col = 0; col < cols; col++) {
-      const outIdx = (row - rowStart) * cols + col;
-      if (pumps.length === 0) {
-        values[outIdx] = -Infinity;
-        continue;
+  if (pumps.length === 0) {
+    values.fill(-Infinity);
+  } else if (typeof acoustics.acoustics_gridStripe === "function") {
+    // Batch: pumpene som flat stride-3-array [x0,y0,brg0, x1,…]; Haskell
+    // (Lyd.Felt.rutenettStripe) fyller 'values' radmajor i ett kall.
+    const xyb = new Float64Array(pumps.length * 3);
+    for (let i = 0; i < pumps.length; i++) {
+      const p = pumps[i];
+      xyb[i * 3] = p.x; xyb[i * 3 + 1] = p.y; xyb[i * 3 + 2] = p.brg;
+    }
+    acoustics.acoustics_gridStripe(srcLevel, xyb, rowStart, rowEnd, cols, cellSizeM, values);
+  } else {
+    // Fallback (binær uten acoustics_gridStripe): per-celle-løkke, samme
+    // regnestykke som Lyd.Felt gjør – bare celler·(pumper+1) WASM-kall.
+    const levels = new Float64Array(pumps.length);
+    for (let row = rowStart; row < rowEnd; row++) {
+      const y = row * cellSizeM;
+      for (let col = 0; col < cols; col++) {
+        const x = col * cellSizeM;
+        for (let i = 0; i < pumps.length; i++) {
+          const p = pumps[i];
+          const dx = x - p.x, dy = y - p.y;
+          const r = Math.max(Math.hypot(dx, dy), 1);
+          const brgToCell = ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
+          const angle = Math.abs(((brgToCell - p.brg + 540) % 360) - 180);
+          levels[i] = acoustics.acoustics_levelAt(srcLevel, r, angle);
+        }
+        values[(row - rowStart) * cols + col] = acoustics.acoustics_dbSum(levels);
       }
-      const x = col * cellSizeM;
-      for (let i = 0; i < pumps.length; i++) {
-        const p = pumps[i];
-        const dx = x - p.x, dy = y - p.y;
-        const r = Math.max(Math.hypot(dx, dy), 1);
-        const brgToCell = ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
-        const angle = Math.abs(((brgToCell - p.brg + 540) % 360) - 180);
-        levels[i] = acoustics.acoustics_levelAt(srcLevel, r, angle);
-      }
-      values[outIdx] = acoustics.acoustics_dbSum(levels);
     }
   }
   self.postMessage({ reqId, rowStart, values }, [values.buffer]);
