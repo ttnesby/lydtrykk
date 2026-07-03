@@ -49,7 +49,9 @@ andre offsettene er A = 10 dBA og B = 5 dBA strengere enn C.
   Web Workers (`gridWorker.js`, egen WASM-instans hver) for ekte parallell
   beregning. Ekvidistanser (konturlinjer, via en enkel
   marching-squares-implementasjon) tegnes ved de aktive
-  klassematrise-grensene, fargekodet som fargeskalaen ellers. Rutenettet kan skrus av i
+  klassematrise-grensene, fargekodet som fargeskalaen ellers, og flaten
+  over hver grense tones lett i grensens egen farge slik at siden som
+  bryter grensen er tydelig også uten kartvaner. Rutenettet kan skrus av i
   panelet; da vises i stedet hver utedels egen **halvbue** (retningsavhengig
   rekkevidde for én kilde) for den valgte grensen.
 - **Lagre / last oppsett**: «Lagre til fil» laster ned hele tilstanden som en

@@ -153,6 +153,10 @@ past the grid, the contour is closed along the grid edge
 (`boundarySegments` in `gridGeo.js`) — otherwise a saturated edge would be
 invisible; simultaneously saturated limits are nested slightly inward per
 active limit (strictest outermost) so they don't draw on top of each other.
+A soft canvas `L.imageOverlay` (`renderFyll`) tints each cell with the
+color of the *highest* active limit it exceeds — flat concentric bands
+(one color per cell, deliberately non-accumulating) so the over-limit side
+of each contour is readable without map-reading habits.
 
 - **Parallelism**: a persistent pool of Web Workers (`gridWorker.js`, sized
   `min(8, hardwareConcurrency)`), each independently loading its own
