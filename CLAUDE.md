@@ -129,8 +129,9 @@ neither loads — or the binary is too old to have `acoustics_grense` — the
 pages show a visible error instead of silently computing wrong numbers: on
 the map page, matrix/zones/grid render only after `bootAkustikk()` has
 received the exports (guards in `drawPump`/`renderMatrise` cover map clicks
-that arrive before then), and a worker without a core replies `{error: true}`
-so that grid round is skipped.
+that arrive before then), and a worker without a core — or with a binary too
+old to have `acoustics_gridStripe` — replies `{error: true}` so that grid
+round is skipped.
 
 ### Runtime dependencies: vendored WASI shim, SRI-pinned Leaflet
 
@@ -174,9 +175,10 @@ of each contour is readable without map-reading habits.
   Rows are split contiguously across the pool; each worker returns a
   transferable `Float64Array`. A worker computes its stripe with a single
   `acoustics_gridStripe` call (the cell loop runs in Haskell, `Lyd.Felt`);
-  if the loaded binary predates that export (e.g. the deployed fallback
-  binary), it falls back to the equivalent per-cell
-  `acoustics_levelAt`/`acoustics_dbSum` loop.
+  a binary that predates that export is treated like a missing core — the
+  worker replies `{error: true}` and the round is skipped. There is no JS
+  per-cell fallback loop, on purpose: it would be a second copy of the
+  bearing/angle policy that `Lyd.Felt` owns.
 - **Coordinates**: grid math uses a local planar (equirectangular) projection
   from the grid's SW corner, *not* Leaflet's haversine helpers — cheap and
   accurate enough at lot/neighborhood scale, and avoids needing Leaflet
