@@ -79,3 +79,47 @@ export function marchingSquares(grid,rows,cols,threshold){
   }
   return segments;
 }
+
+// Kantsegmenter: marching squares gir åpne kurver der nivåflaten krysser
+// rutenettets ytterkant, så et område over grensen som fortsetter utenfor
+// rutenettet ser ut som om konturen bare slutter. Denne tegner konturen
+// videre langs selve kanten: for hvert nabopar av kantnoder tas den delen
+// av kantstykket der (lineært interpolert) verdi er over grensen. Samme
+// >-konvensjon og samme (rad, kolonne)-koordinater som marchingSquares, så
+// segmentene kan rendres i samme polyline.
+//
+// 'inset' (i celleenheter, default 0) rykker segmentene innover fra kanten –
+// brukes til å nøste flere samtidig mettede grenser som parallelle striper i
+// stedet for at de tegnes oppå hverandre. Verdiene samples fortsatt på de
+// ekte kantnodene; kun tegnekoordinatene forskyves (og klemmes så hjørnene
+// møtes uten haler).
+export function boundarySegments(grid,rows,cols,threshold,inset=0){
+  const segments=[];
+  const at=(r,c)=>grid[r*cols+c];
+  const d=Math.min(inset,(rows-1)/2,(cols-1)/2);
+  const juster=([r,c])=>[
+    Math.min(Math.max(r,d),rows-1-d),
+    Math.min(Math.max(c,d),cols-1-d),
+  ];
+  const emit=(p0,v0,p1,v1)=>{
+    const o0=v0>threshold, o1=v1>threshold;
+    if(!o0&&!o1) return;
+    let seg;
+    if(o0&&o1) seg=[p0,p1];
+    else {
+      const t=(threshold-v0)/(v1-v0);
+      const kryss=[p0[0]+t*(p1[0]-p0[0]), p0[1]+t*(p1[1]-p0[1])];
+      seg=o0 ? [p0,kryss] : [kryss,p1];
+    }
+    segments.push([juster(seg[0]),juster(seg[1])]);
+  };
+  for(let c=0;c<cols-1;c++){
+    emit([0,c],at(0,c),[0,c+1],at(0,c+1));                          // sørkant
+    emit([rows-1,c],at(rows-1,c),[rows-1,c+1],at(rows-1,c+1));      // nordkant
+  }
+  for(let r=0;r<rows-1;r++){
+    emit([r,0],at(r,0),[r+1,0],at(r+1,0));                          // vestkant
+    emit([r,cols-1],at(r,cols-1),[r+1,cols-1],at(r+1,cols-1));      // østkant
+  }
+  return segments;
+}

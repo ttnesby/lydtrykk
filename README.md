@@ -47,9 +47,9 @@ andre offsettene er A = 10 dBA og B = 5 dBA strengere enn C.
   rutenett (justerbar oppløsning, 1–5 m, default 2 m) som regner **kumulativt**
   (logaritmisk summert) lydnivå fra alle utedeler for hver rute — i en pool av
   Web Workers (`gridWorker.js`, egen WASM-instans hver) for ekte parallell
-  beregning. Ruter over strengeste aktive grense markeres røde, og
-  ekvidistanser (konturlinjer, via en enkel marching-squares-implementasjon)
-  tegnes ved de aktive klassematrise-grensene. Rutenettet kan skrus av i
+  beregning. Ekvidistanser (konturlinjer, via en enkel
+  marching-squares-implementasjon) tegnes ved de aktive
+  klassematrise-grensene, fargekodet som fargeskalaen ellers. Rutenettet kan skrus av i
   panelet; da vises i stedet hver utedels egen **halvbue** (retningsavhengig
   rekkevidde for én kilde) for den valgte grensen.
 - **Lagre / last oppsett**: «Lagre til fil» laster ned hele tilstanden som en

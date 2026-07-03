@@ -145,11 +145,14 @@ migration that `restore()` applies).
 ### `lydnivakart.html`: grid/ekvidistanser feature (the newest, most involved part)
 
 Two draggable corner markers define a rectangular grid over the map. For
-each cell, cumulative dB from all placed units is computed and rendered two
-ways: a red canvas `L.imageOverlay` for cells over the strictest active
-class-matrix limit, and dB-equidistance contour lines (custom marching-squares
-implementation, no external dependency) at each active class-matrix limit,
-colored/dashed to match the existing limit color scale.
+each cell, cumulative dB from all placed units is computed and rendered as
+dB-equidistance contour lines (custom marching-squares implementation, no
+external dependency) at each active class-matrix limit, colored/dashed to
+match the existing limit color scale. Where the over-limit region extends
+past the grid, the contour is closed along the grid edge
+(`boundarySegments` in `gridGeo.js`) — otherwise a saturated edge would be
+invisible; simultaneously saturated limits are nested slightly inward per
+active limit (strictest outermost) so they don't draw on top of each other.
 
 - **Parallelism**: a persistent pool of Web Workers (`gridWorker.js`, sized
   `min(8, hardwareConcurrency)`), each independently loading its own

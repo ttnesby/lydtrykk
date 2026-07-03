@@ -119,7 +119,7 @@
       <h1>Varmepumpe – lydnivåsoner</h1>
       <button id="side-close" class="side-close" title="Skjul panel" aria-label="Skjul panel">‹</button>
     </div>
-    <p class="sub">Klikk i kartet for å plassere en utedel. Dra de to blå hjørnemarkørene for å sette rutenettets område – rutenettet viser <b>samlet</b> lydnivå fra alle utedeler over hele området, med røde ruter der grensen brytes og fargede linjer som dB-ekvidistanser. Skru av rutenettet i panelet for i stedet å se hver utedels egen halvbue. Modell:
+    <p class="sub">Klikk i kartet for å plassere en utedel. Dra de to blå hjørnemarkørene for å sette rutenettets område – rutenettet viser <b>samlet</b> lydnivå fra alle utedeler over hele området, med fargede linjer som dB-ekvidistanser for hver aktiv grense. Skru av rutenettet i panelet for i stedet å se hver utedels egen halvbue. Modell:
       <span class="tag modell" tabindex="0" role="button" aria-label="Typiske lydnivåer for ulike modeller">Multi Nordic 2M60S4 ⓘ<span class="modell-tip">
         <span class="mhd">Multi Nordic 2M60S4 · dB(A) @ 1 m</span>
         <span class="mrow"><span>Maks oppgitt</span><b>50</b></span>
@@ -212,7 +212,7 @@
 // Hele appen er én ES-modul: geometri og migrering importeres fra egne,
 // Node-testbare moduler (frontend/test/), og wasm-boot skjer nederst i samme
 // modul (top-level await).
-import { metersPerDeg, toLocal, fromLocal, destPoint, bearing, marchingSquares } from './gridGeo.js';
+import { metersPerDeg, toLocal, fromLocal, destPoint, bearing, marchingSquares, boundarySegments } from './gridGeo.js';
 import { normaliserOppsett } from './migrering.js';
 
 // Mobile sidebar toggle
@@ -321,7 +321,6 @@ function heat(limit){ return FARGE[limit]||'#888'; }
 function heatText(limit){ const c=FARGE[limit]; if(!c) return '#fff';
   const n=parseInt(c.slice(1),16), r=(n>>16)&255, g=(n>>8)&255, b=n&255;
   return (0.299*r+0.587*g+0.114*b)/255 > 0.58 ? '#15233a' : '#fff'; }
-function strictestLimit(){ return activeLimits.size ? Math.min(...activeLimits) : null; }
 
 // ---- akustikk-kjerne ----
 // Sannhetskilden er Lyd.Beregning (WASM), delt med NS 8175-siden og med
@@ -452,7 +451,7 @@ function drawPump(p){
       return;
     }
     const c=heat(lim), erBp=BPLUSS.has(lim);
-    z.setStyle({color:c,fillColor:c,weight:erBp?2.8:2,dashArray:erBp?'8 6':null,fillOpacity:erBp?0:.08});
+    z.setStyle({color:c,fillColor:c,weight:erBp?3.8:3,dashArray:erBp?'8 6':null,fillOpacity:erBp?0:.08});
     z.setLatLngs(lobePts(p,lim));
     if(!map.hasLayer(z)) z.addTo(map);
   });
@@ -553,7 +552,7 @@ function setupGrid(saved){
   scheduleGrid();
 }
 
-// Av/på for hele rutenett-funksjonen. Av: hjørnene og rutenettets overlay/
+// Av/på for hele rutenett-funksjonen. Av: hjørnene og rutenettets
 // ekvidistanser fjernes fra kartet, og hver utedel viser igjen sin egen
 // halvbue (som før rutenettet fantes). På: halvbuene skjules igjen (se
 // drawPump) og rutenettet beregnes på nytt.
@@ -569,7 +568,6 @@ function setGridOn(on){
   } else {
     if(map.hasLayer(swMarker)) map.removeLayer(swMarker);
     if(map.hasLayer(neMarker)) map.removeLayer(neMarker);
-    if(overlayLayer){ map.removeLayer(overlayLayer); overlayLayer=null; }
     Object.values(contourLayers).forEach(l=>map.removeLayer(l)); contourLayers={};
     document.getElementById('gridinfo').textContent='Rutenett avslått.';
     pumps.forEach(drawPump);
@@ -643,7 +641,6 @@ async function recomputeGrid(){
   const grid=await computeGrid(rows,cols,res,sw);
   if(!grid) return;
   lastGrid={grid,rows,cols,res,sw};
-  renderOverlay(lastGrid);
   renderContours(lastGrid);
 }
 function updateGridInfo(cols,rows,res,coarsened){
@@ -654,32 +651,8 @@ function updateGridInfo(cols,rows,res,coarsened){
   el.textContent=txt;
 }
 
-let overlayLayer=null;
-function renderOverlay(g){
-  const {grid,rows,cols,sw,res}=g;
-  const lim=strictestLimit();
-  const canvas=document.createElement('canvas');
-  canvas.width=cols; canvas.height=rows;
-  const ctx=canvas.getContext('2d');
-  const img=ctx.createImageData(cols,rows);
-  for(let row=0; row<rows; row++){
-    const outRow=rows-1-row;   // rad 0 i rutenettet = sør; bildets rad 0 = nord (topp)
-    for(let col=0; col<cols; col++){
-      if(lim!=null && grid[row*cols+col]>lim){
-        const pi=(outRow*cols+col)*4;
-        img.data[pi]=196; img.data[pi+1]=54; img.data[pi+2]=47; img.data[pi+3]=140;
-      }
-    }
-  }
-  ctx.putImageData(img,0,0);
-  const ne=fromLocal((cols-1)*res,(rows-1)*res,sw);
-  if(overlayLayer) map.removeLayer(overlayLayer);
-  overlayLayer=L.imageOverlay(canvas.toDataURL(), [[sw.lat,sw.lng],[ne.lat,ne.lng]], {interactive:false}).addTo(map);
-  overlayLayer.once('load',()=>{ if(overlayLayer._image) overlayLayer._image.style.imageRendering='pixelated'; });
-}
-
-// marchingSquares importeres fra gridGeo.js; segmentene er i (rad, kolonne)-
-// koordinater og skaleres til geografiske punkter her.
+// marchingSquares/boundarySegments importeres fra gridGeo.js; segmentene er i
+// (rad, kolonne)-koordinater og skaleres til geografiske punkter her.
 function segmentsToLatLngs(segments,res,sw){
   return segments.map(([p0,p1])=>[
     fromLocal(p0[1]*res, p0[0]*res, sw),
@@ -687,16 +660,26 @@ function segmentsToLatLngs(segments,res,sw){
   ]);
 }
 let contourLayers={};
+// Innrykk per aktiv grense (i celleenheter) for kantsegmentene, slik at flere
+// samtidig mettede grenser nøstes som parallelle striper langs kanten i
+// stedet for å tegnes oppå hverandre. Strengeste grense ligger ytterst (helt
+// på kanten), mildere gradvis innenfor – samme nøsting som konturene ellers.
+const KANT_INNRYKK=0.35;
 function renderContours(g){
   const {grid,rows,cols,res,sw}=g;
+  const aktive=[...activeLimits].sort((x,y)=>x-y);
   ALLE_GRENSER.forEach(lim=>{
     if(contourLayers[lim]){ map.removeLayer(contourLayers[lim]); delete contourLayers[lim]; }
     if(!activeLimits.has(lim)) return;
-    const segs=marchingSquares(grid,rows,cols,lim);
+    // Kantsegmentene lukker konturen langs rutenettkanten der området over
+    // grensen fortsetter utenfor rutenettet – ellers ser konturen bare
+    // avkuttet ut og en helt mettet kant blir usynlig.
+    const inset=aktive.indexOf(lim)*KANT_INNRYKK;
+    const segs=marchingSquares(grid,rows,cols,lim).concat(boundarySegments(grid,rows,cols,lim,inset));
     if(!segs.length) return;
     const erBp=BPLUSS.has(lim);
     contourLayers[lim]=L.polyline(segmentsToLatLngs(segs,res,sw), {
-      color:heat(lim), weight:erBp?2.8:2, dashArray:erBp?'8 6':null, interactive:false,
+      color:heat(lim), weight:erBp?3.8:3, dashArray:erBp?'8 6':null, interactive:false,
     }).addTo(map);
   });
 }
