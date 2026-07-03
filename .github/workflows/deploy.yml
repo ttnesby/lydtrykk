@@ -108,6 +108,9 @@ jobs:
         with:
           name: dist
           path: dist
+          # v4 utelater skjulte filer som standard — uten denne mister
+          # deploy-jobbene dist/.nojekyll, og Pages kjører Jekyll på gh-pages.
+          include-hidden-files: true
 
   # Produksjon: push til main → gh-pages-roten. Beholder eksisterende
   # PR-previews (clean-exclude).
