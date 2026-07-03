@@ -119,7 +119,7 @@
       <h1>Varmepumpe – lydnivåsoner</h1>
       <button id="side-close" class="side-close" title="Skjul panel" aria-label="Skjul panel">‹</button>
     </div>
-    <p class="sub">Klikk i kartet for å plassere en utedel. Dra de to blå hjørnemarkørene for å sette rutenettets område – rutenettet viser <b>samlet</b> lydnivå fra alle utedeler over hele området, med fargede linjer som dB-ekvidistanser for hver aktiv grense. Skru av rutenettet i panelet for i stedet å se hver utedels egen halvbue. Modell:
+    <p class="sub">Klikk i kartet for å plassere en utedel. Dra de to blå hjørnemarkørene for å sette rutenettets område – rutenettet viser <b>samlet</b> lydnivå fra alle utedeler over hele området, med fargede linjer som dB-ekvidistanser for hver aktiv grense og en lett fargetone på siden der grensen overskrides. Skru av rutenettet i panelet for i stedet å se hver utedels egen halvbue. Modell:
       <span class="tag modell" tabindex="0" role="button" aria-label="Typiske lydnivåer for ulike modeller">Multi Nordic 2M60S4 ⓘ<span class="modell-tip">
         <span class="mhd">Multi Nordic 2M60S4 · dB(A) @ 1 m</span>
         <span class="mrow"><span>Maks oppgitt</span><b>50</b></span>
@@ -568,6 +568,7 @@ function setGridOn(on){
   } else {
     if(map.hasLayer(swMarker)) map.removeLayer(swMarker);
     if(map.hasLayer(neMarker)) map.removeLayer(neMarker);
+    if(fyllLayer){ map.removeLayer(fyllLayer); fyllLayer=null; }
     Object.values(contourLayers).forEach(l=>map.removeLayer(l)); contourLayers={};
     document.getElementById('gridinfo').textContent='Rutenett avslått.';
     pumps.forEach(drawPump);
@@ -641,6 +642,7 @@ async function recomputeGrid(){
   const grid=await computeGrid(rows,cols,res,sw);
   if(!grid) return;
   lastGrid={grid,rows,cols,res,sw};
+  renderFyll(lastGrid);
   renderContours(lastGrid);
 }
 function updateGridInfo(cols,rows,res,coarsened){
@@ -649,6 +651,40 @@ function updateGridInfo(cols,rows,res,coarsened){
   let txt=`${w} × ${h} m · ${res.toFixed(2)} m/celle · ${(cols*rows).toLocaleString('no')} celler`;
   if(coarsened) txt+=' · oppløsning justert opp for å holde beregningen rask';
   el.textContent=txt;
+}
+
+// Lett fargefyll som gjør over/under-siden av konturene lesbar uten kart-
+// vaner: hver celle tones med fargen til den *høyeste* aktive grensen cellen
+// overskrider – flate, konsentriske bånd der flaten mellom to nabokonturer
+// har den innerste konturens farge. Én farge per celle (ingen akkumulering),
+// og celler under mildeste overskredne grense forblir ufarget, så «stille
+// lommer» inne i et mettet område er synlige som hull i fyllet.
+let fyllLayer=null;
+const FYLL_ALPHA=45;   // av 255, ~18 % dekkgrad – skal ligge under strekene
+function renderFyll(g){
+  const {grid,rows,cols,sw,res}=g;
+  if(fyllLayer){ map.removeLayer(fyllLayer); fyllLayer=null; }
+  const aktive=[...activeLimits].sort((x,y)=>x-y);
+  if(!aktive.length) return;
+  const rgb=aktive.map(l=>{ const n=parseInt(heat(l).slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; });
+  const canvas=document.createElement('canvas');
+  canvas.width=cols; canvas.height=rows;
+  const ctx=canvas.getContext('2d');
+  const img=ctx.createImageData(cols,rows);
+  for(let row=0; row<rows; row++){
+    const outRow=rows-1-row;   // rad 0 i rutenettet = sør; bildets rad 0 = nord (topp)
+    for(let col=0; col<cols; col++){
+      const v=grid[row*cols+col];
+      let i=-1;
+      while(i+1<aktive.length && v>aktive[i+1]) i++;
+      if(i<0) continue;
+      const pi=(outRow*cols+col)*4;
+      img.data[pi]=rgb[i][0]; img.data[pi+1]=rgb[i][1]; img.data[pi+2]=rgb[i][2]; img.data[pi+3]=FYLL_ALPHA;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  const ne=fromLocal((cols-1)*res,(rows-1)*res,sw);
+  fyllLayer=L.imageOverlay(canvas.toDataURL(), [[sw.lat,sw.lng],[ne.lat,ne.lng]], {interactive:false}).addTo(map);
 }
 
 // marchingSquares/boundarySegments importeres fra gridGeo.js; segmentene er i
