@@ -34,8 +34,9 @@ cabal test lyd-core-test --test-options="--pattern <substring>"
 ### JS tests (node, no dependencies)
 
 The pure JS modules (`frontend/static/gridGeo.js` — projection/marching
-squares, `frontend/static/migrering.js` — save-format migration) are tested
-with node's built-in runner:
+squares, `frontend/static/migrering.js` — save-format migration,
+`frontend/static/husrekker.js` — UTM33→WGS84 + husrekke-json normalisation)
+are tested with node's built-in runner:
 
 ```sh
 node --test frontend/test/*.test.mjs
@@ -142,14 +143,17 @@ but is pinned with SRI `integrity` hashes in `lydnivakart.html`; bumping the
 Leaflet version requires recomputing those hashes
 (`curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`).
 
-### Testable JS modules (`gridGeo.js`, `migrering.js`)
+### Testable JS modules (`gridGeo.js`, `migrering.js`, `husrekker.js`)
 
 The map page's main script is one ES module that imports the pure parts from
-two node-testable modules (`frontend/test/*.test.mjs`, run in CI before the
+node-testable modules (`frontend/test/*.test.mjs`, run in CI before the
 Haskell tests): `gridGeo.js` (local planar projection, `destPoint`/`bearing`,
-marching squares — returns plain `{lat, lng}` objects, no Leaflet dependency)
-and `migrering.js` (`normaliserOppsett`, the tolerant v1/v2/v3 save-format
-migration that `restore()` applies).
+marching squares — returns plain `{lat, lng}` objects, no Leaflet dependency),
+`migrering.js` (`normaliserOppsett`, the tolerant v1/v2/v3 save-format
+migration that `restore()` applies), and `husrekker.js` (`utm33TilLatLng`,
+an inverse transverse Mercator for EUREF89/UTM zone 33 — EPSG:25833, the CRS
+of the house-row polygons — plus `normaliserHusrekke`, which validates the
+`{navn, crs, polygon}` shape and rejects any other CRS loudly).
 
 ### `lydnivakart.html`: grid/ekvidistanser feature (the newest, most involved part)
 
@@ -210,6 +214,19 @@ migrates older shapes in place (v1 `mode`/`mount`/`bands` fields, v2's now-
 removed `nabos` neighbor-point array is simply ignored if present). Add new
 persisted fields by extending `snapshot()` and reading them defensively in
 `restore()` — don't bump the version number for additive, tolerant changes.
+
+### Husrekker (`husrekker/polygoner/`, drawn by `lydnivakart.html`)
+
+The house rows at Dyst live as one JSON file per row in `husrekker/polygoner/`
+(`{navn, crs: "EPSG:25833", polygon: [[east, north], ...]}`), listed by
+`index.json` in the same directory — adding a row = new file + one line in the
+manifest. The map page loads them at boot (independent of the wasm core) and
+draws them as grey, `interactive:false` polygons, toggled by the «Husrekker»
+checkbox. Fetching uses the same hybrid pattern as `default.json`: raw from
+`main` first (row edits on `main` reach users without a deploy — `husrekker/**`
+is in the workflow's `paths-ignore` for that reason), then relative paths
+(`dist`/PR preview, dev server from the repo root). `build.sh` copies
+`husrekker/` into `dist/husrekker/` as the bundled fallback.
 
 ### `default.json` hybrid live-fetch
 

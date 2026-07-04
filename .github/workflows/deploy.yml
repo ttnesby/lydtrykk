@@ -8,21 +8,24 @@ name: test-build-deploy
 # - pull_request (åpen)   → bygg + deploy preview til gh-pages/pr-preview/pr-N/
 # - pull_request (lukket) → fjern preview-mappa igjen
 #
-# Endring av kun default-oppsettet trenger ingen ny deploy – appen henter
-# frontend/static/default.json live fra GitHub raw ved refresh. Manuell deploy
-# (for å oppdatere den bundlede fallback-kopien) via "Run workflow".
+# Endring av kun default-oppsettet eller husrekke-polygonene trenger ingen ny
+# deploy – appen henter frontend/static/default.json og husrekker/polygoner/
+# live fra GitHub raw ved refresh. Manuell deploy (for å oppdatere de bundlede
+# fallback-kopiene) via "Run workflow".
 
 on:
   push:
     branches: [main]
     paths-ignore:
       - 'frontend/static/default.json'
+      - 'husrekker/**'
       - '**/*.md'
       - 'LICENSE'
   pull_request:
     types: [opened, synchronize, reopened, closed]
     paths-ignore:
       - 'frontend/static/default.json'
+      - 'husrekker/**'
       - '**/*.md'
       - 'LICENSE'
   workflow_dispatch:
