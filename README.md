@@ -54,6 +54,10 @@ andre offsettene er A = 10 dBA og B = 5 dBA strengere enn C.
   bryter grensen er tydelig også uten kartvaner. Rutenettet kan skrus av i
   panelet; da vises i stedet hver utedels egen **halvbue** (retningsavhengig
   rekkevidde for én kilde) for den valgte grensen.
+- **Husrekker**: husrekkene på feltet tegnes som grå polygoner (kan skrus
+  av/på i panelet). Polygonene ligger som JSON-filer i repoet
+  (`husrekker/polygoner/`, EUREF89/UTM sone 33) og hentes live fra GitHub —
+  se eget avsnitt under.
 - **Lagre / last oppsett**: «Lagre til fil» laster ned hele tilstanden som en
   menneskelesbar JSON-fil i nedlastingsmappa — lydkilde, valgte soner,
   standardretning, karttype, alle utedeler (plassering + vinkel), rutenettets
@@ -97,6 +101,30 @@ Hvis raw ikke kan hentes (nett/CORS/offline) faller siden tilbake på den
 bundlede kopien fra forrige deploy, så defaults lastes alltid. For å oppdatere
 den bundlede fallback-kopien, kjør deploy-workflowen manuelt («Run workflow»).
 
+### Legge til / endre husrekker
+
+Husrekkene tegnes fra én JSON-fil per rekke i
+[`husrekker/polygoner/`](husrekker/polygoner/), med koordinater i
+**EUREF89 / UTM sone 33** (EPSG:25833, meter) og full presisjon:
+
+```json
+{ "navn": "k-rekka", "crs": "EPSG:25833", "polygon": [[øst, nord], ...] }
+```
+
+[`index.json`](husrekker/polygoner/index.json) i samme mappe lister filene som
+skal lastes — **ny rekke = ny JSON-fil + én linje i manifestet** (husk
+`.json`-endelsen; navnet må matche fila eksakt). Konverteringen til WGS84
+skjer i `frontend/static/husrekker.js` (Node-testet mot pyproj-fasit); et
+ukjent `crs` avvises med feilmelding, og et (tilnærmet) duplisert sluttpunkt
+tolereres.
+
+Som `default.json` hentes filene **live fra GitHub raw** ved sideinnlasting,
+så en rekke-endring på `main` når brukerne uten ny deploy (`husrekker/**`
+ligger i `paths-ignore`). Faller raw-hentingen, brukes den bundlede kopien i
+`dist/husrekker/` (kopieres inn av `build.sh`). En fil som mangler eller er
+ugyldig hoppes stille over (med `console.warn`) — resten av rekkene tegnes
+likevel.
+
 ## Formler
 
 Forenklet frittfeltmodell (punktkilde, invers kvadratlov), med referansenivå
@@ -138,10 +166,15 @@ flere kilder: `ltot = 10·log10(Σ 10^(l/10))`.
     marching squares), Node-testet i `frontend/test/`.
   - `migrering.js` — normalisering av lagrede oppsett (v1/v2/v3),
     Node-testet i `frontend/test/`.
+  - `husrekker.js` — UTM33→WGS84-konvertering og normalisering av
+    husrekke-polygonene, Node-testet i `frontend/test/`.
   - `vendor/wasi/` — vendored WASI-shim (`@bjorn3/browser_wasi_shim@0.3.0`).
   - `default.json` — standard-oppsettet simulatoren laster ved oppstart
     (se eget avsnitt under).
 - `frontend/test/` — Node-tester for de rene JS-modulene (kjøres i CI).
+- `husrekker/polygoner/` — husrekkene som JSON-polygoner (EPSG:25833) +
+  `index.json`-manifest; hentes live av simulatoren og bundles i
+  `dist/husrekker/` som fallback (se «Legge til / endre husrekker»).
 - `build.sh` — wasm-bygg → `dist/` (post-link av JSFFI-glue, wasm-opt -Oz).
 - `.github/workflows/deploy.yml` — test (JS + nativ GHC) → wasm-bygg →
   GitHub Pages.
@@ -200,6 +233,6 @@ hoppe over hele workflow-kjøringen ved å ta med en av disse i commit-meldingen
 ```
 
 Dette gjelder kun `push`/`pull_request` — manuell kjøring via «Run workflow»
-påvirkes ikke. Rene endringer i dokumentasjon, `LICENSE` og standard-oppsettet
-(`default.json`) hoppes over automatisk via `paths-ignore` og trenger derfor
-ingen slik markør.
+påvirkes ikke. Rene endringer i dokumentasjon, `LICENSE`, standard-oppsettet
+(`default.json`) og husrekke-polygonene (`husrekker/`) hoppes over automatisk
+via `paths-ignore` og trenger derfor ingen slik markør.

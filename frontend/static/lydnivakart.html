@@ -190,6 +190,14 @@
     </div>
 
     <div class="grp">
+      <label class="l">Husrekker</label>
+      <div class="felt">
+        <label class="ck"><input type="checkbox" id="husOn" checked> Vis husrekkene</label>
+      </div>
+      <p class="note">Husrekkene tegnes som grå polygoner (fra <code>husrekker/polygoner/</code> på GitHub, EUREF89/UTM 33). Ny rekke = ny JSON-fil pluss én linje i <code>index.json</code> på main – synlig her uten ny deploy.</p>
+    </div>
+
+    <div class="grp">
       <label class="l">Les dette ærlig</label>
       <p class="note">• Hver rute i rutenettet viser den logaritmiske summen av alle utedelene – to pumper på 35 dBA hver gir ~38 dBA samlet.<br>
       • Selv <b>under</b> grenseverdiene blir inntil ~20 % sjenert av lydnivået.<br>
@@ -214,6 +222,7 @@
 // modul (top-level await).
 import { metersPerDeg, toLocal, fromLocal, destPoint, bearing, marchingSquares, boundarySegments } from './gridGeo.js';
 import { normaliserOppsett } from './migrering.js';
+import { normaliserHusrekke } from './husrekker.js';
 
 // Mobile sidebar toggle
 const toggleBtn=document.getElementById('toggle-sidebar');
@@ -859,6 +868,43 @@ async function loadDefaults(){
 }
 // loadDefaults() kalles fra bootAkustikk() – restore() regner soner/rutenett
 // og trenger derfor kjernen.
+
+// ---- husrekker (grå bygningspolygoner fra husrekker/polygoner/) ----
+// Lastes uavhengig av wasm-kjernen (ren JS/Leaflet, ingen bootAkustikk-guard).
+// Samme hybridmønster som default.json: raw fra main først (redigeringer på
+// main slår igjennom uten ny deploy, jf. paths-ignore i workflowen), så
+// relative kandidater – dist/PR-preview, og dev-server fra repo-rota.
+// Konvertering/validering (UTM33→WGS84) ligger i husrekker.js (Node-testet).
+const HUS_BASER=[
+  'https://raw.githubusercontent.com/ttnesby/lydtrykk/main/husrekker/polygoner/',
+  'husrekker/polygoner/',
+  '../../husrekker/polygoner/',
+];
+let husRekker=[], husLayers=[];
+// interactive:false så kart-klikk gjennom polygonene fortsatt plasserer pumper.
+function tegnHusrekker(){
+  husLayers.forEach(l=>map.removeLayer(l)); husLayers=[];
+  if(!document.getElementById('husOn').checked) return;
+  husLayers=husRekker.map(r=>L.polygon(r.punkter,
+    {color:'#555',weight:2,fillColor:'#888',fillOpacity:.25,interactive:false}).addTo(map));
+}
+async function loadHusrekker(){
+  const get=url=>fetch(url+'?t='+Date.now(),{cache:'no-store'}).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); });
+  for(const base of HUS_BASER){
+    let filer;
+    try{ ({filer}=await get(base+'index.json')); }catch(e){ continue; }
+    if(!Array.isArray(filer)) continue;
+    const rekker=await Promise.all(filer.map(f=>
+      get(base+f).then(normaliserHusrekke)
+        .catch(e=>{ console.warn(`Husrekka ${f} hoppes over:`,e); return null; })));
+    husRekker=rekker.filter(Boolean);
+    tegnHusrekker();
+    return;
+  }
+  console.warn('Ingen husrekker funnet – index.json utilgjengelig fra alle kandidatene.');
+}
+document.getElementById('husOn').addEventListener('change',tegnHusrekker);
+loadHusrekker();
 
 // ---- akustikk-boot ----
 // Samme app.wasm som NS 8175-siden (lokal, eller deployet fra GitHub Pages

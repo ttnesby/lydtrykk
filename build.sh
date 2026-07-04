@@ -30,6 +30,10 @@ rm -rf dist
 mkdir -p dist
 # '/.' kopierer også skjulte filer (f.eks. .nojekyll), som '*' hopper over.
 cp -R frontend/static/. dist/
+# Husrekke-polygonene ligger utenfor frontend/static (de redigeres på main
+# uten ny deploy, via raw-fetchen i lydnivakart.html) – bundles som fallback.
+mkdir -p dist/husrekker
+cp -R husrekker/. dist/husrekker/
 "$(wasm32-wasi-ghc --print-libdir)"/post-link.mjs --input "$WASM" --output dist/ghc_wasm_jsffi.js
 cp "$WASM" dist/app.wasm
 
