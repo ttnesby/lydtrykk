@@ -167,7 +167,7 @@
       </div>
       <div class="felt">
         <label class="fl" for="gridres">Oppløsning (m)</label>
-        <input type="number" id="gridres" min="1" max="5" step="0.5" value="2">
+        <input type="number" id="gridres" min="0.5" max="5" step="0.5" value="2">
       </div>
       <p class="note" id="gridinfo"></p>
       <p class="note">De to blå hjørnene i kartet setter rutenettets område (nedre venstre / øvre høyre) – dra dem dit du vil dekke. Kumulativt lydnivå for hver rute regnes i bakgrunnen (en pool av Web Workers, én WASM-instans hver) og oppdateres automatisk når du flytter en utedel, endrer lydkilde eller drar et hjørne. Avslått viser kartet i stedet hver utedels egen halvbue.</p>
@@ -192,9 +192,13 @@
     <div class="grp">
       <label class="l">Husrekker</label>
       <div class="felt">
-        <label class="ck"><input type="checkbox" id="husOn" checked> Vis husrekkene</label>
+        <label class="ck"><input type="checkbox" id="husOn" checked> Husrekker på</label>
+      </div>
+      <div class="felt" style="margin-left:22px">
+        <label class="ck"><input type="checkbox" id="husSkjerm" checked> Skjermer (−10 dB)</label>
       </div>
       <p class="note">Husrekkene tegnes som grå polygoner (fra <code>husrekker/polygoner/</code> på GitHub, EUREF89/UTM 33). Ny rekke = ny JSON-fil pluss én linje i <code>index.json</code> på main – synlig her uten ny deploy.</p>
+      <p class="note">Underboksen styrer om husene også skjermer i beregningen: 10 dB trekkes fra hver utedels bidrag der siktlinja til ruta krysser et hus, og ruter inne i husene regnes ikke (grenseverdiene gjelder utendørs) – ekvidistansene brytes ved fasadene. Uten skjerming – eller med husrekkene helt av – regnes det som om husene ikke fantes; sammenlign gjerne de to for å se effekten.</p>
     </div>
 
     <div class="grp">
@@ -203,7 +207,8 @@
       • Selv <b>under</b> grenseverdiene blir inntil ~20 % sjenert av lydnivået.<br>
       • Retningskorreksjonen følger en cosinus-karakteristikk: 0 dB rett frem, økende til −5 dB ved 90° (samme modell som NS 8175-siden).<br>
       • Avstandene er i ekte meter. Bruk målestokken nede i kartet som kontroll.<br>
-      • Modellen er en punktkilde i fritt felt; refleksjoner og bakgrunnslyd i tett bebyggelse kan gjøre virkeligheten verre, ikke bedre.</p>
+      • Modellen er en punktkilde i fritt felt; refleksjoner og bakgrunnslyd i tett bebyggelse kan gjøre virkeligheten verre, ikke bedre.<br>
+      • Husrekke-skjermingen er binær og bevisst konservativ: fast −10 dB per bidrag med brutt siktlinje, mens en reell rekke gir typisk 15–25 dB. Marginen dekker også at refleksjoner mellom fasader (~+3 dB) ikke er medregnet – nettomodellen underestimerer ikke.</p>
     </div>
   </div>
   <div id="divider" title="Dra for å justere bredden"></div>
@@ -593,11 +598,27 @@ catch(e){ console.warn('Kunne ikke starte grid-workere – rutenettet er avslåt
 function pumpsLocal(origin){
   return pumps.map(p=>({ ...toLocal(p.latlng,origin), brg:p.brg }));
 }
+// Husrekkene i rutenettets lokale plan, flatt for WASM-kallet: alle hjørnene
+// som [x0,y0,x1,…] pluss antall hjørner per polygon (grensene i den flate
+// arrayen). null når husrekkene er av (hovedbryteren), skjerming er av
+// (underboksen) eller ingen rekker er lastet – da får workerne ingen
+// polygoner og bruker den uskjermede eksporten.
+function husPolysLocal(origin){
+  if(!document.getElementById('husOn').checked
+     || !document.getElementById('husSkjerm').checked
+     || !husRekker.length) return null;
+  const antall=[], xy=[];
+  husRekker.forEach(r=>{
+    antall.push(r.punkter.length);
+    r.punkter.forEach(pt=>{ const l=toLocal(pt,origin); xy.push(l.x,l.y); });
+  });
+  return { xy:new Float64Array(xy), antall:new Float64Array(antall) };
+}
 let gridReqSeq=0;
 function computeGrid(rows,cols,res,origin){
   if(!gridWorkers.length) return Promise.resolve(null);
   const reqId=++gridReqSeq;
-  const src=srcLevel(), pl=pumpsLocal(origin);
+  const src=srcLevel(), pl=pumpsLocal(origin), polys=husPolysLocal(origin);
   const perWorker=Math.ceil(rows/gridWorkers.length);
   const jobs=gridWorkers.map((w,i)=>{
     const rowStart=i*perWorker, rowEnd=Math.min(rows,rowStart+perWorker);
@@ -618,7 +639,7 @@ function computeGrid(rows,cols,res,origin){
       w.addEventListener('message',onMsg);
       w.addEventListener('error',onErr);
       w.addEventListener('messageerror',onErr);
-      w.postMessage({reqId,rowStart,rowEnd,cols,cellSizeM:res,pumps:pl,srcLevel:src});
+      w.postMessage({reqId,rowStart,rowEnd,cols,cellSizeM:res,pumps:pl,srcLevel:src,polys});
     });
   });
   return Promise.all(jobs).then(parts=>{
@@ -626,7 +647,9 @@ function computeGrid(rows,cols,res,origin){
     if(parts.some(part=>part===null)) return null;
     const grid=new Float64Array(rows*cols);
     parts.forEach(part=>{ if(part) grid.set(part.values, part.rowStart*cols); });
-    return grid;
+    // 'uskjermet': en worker med eldre binær (uten skjerming-eksporten) har
+    // regnet uten husskjerming – konservativt riktig, men skal synes i UI-et.
+    return { grid, uskjermet: parts.some(part=>part && part.uskjermet) };
   });
 }
 
@@ -648,11 +671,15 @@ async function recomputeGrid(){
   if(!gridOn||!corners.sw||!corners.ne) return;
   const {sw,res,cols,rows,coarsened}=gridDims();
   updateGridInfo(cols,rows,res,coarsened);
-  const grid=await computeGrid(rows,cols,res,sw);
-  if(!grid) return;
-  lastGrid={grid,rows,cols,res,sw};
+  const utfall=await computeGrid(rows,cols,res,sw);
+  if(!utfall) return;
+  lastGrid={grid:utfall.grid,rows,cols,res,sw};
   renderFyll(lastGrid);
   renderContours(lastGrid);
+  if(utfall.uskjermet){
+    const el=document.getElementById('gridinfo');
+    if(el) el.textContent+=' · kjernen mangler skjerming-eksporten (eldre binær) – regnet uten husskjerming (konservativt)';
+  }
 }
 function updateGridInfo(cols,rows,res,coarsened){
   const el=document.getElementById('gridinfo'); if(!el) return;
@@ -780,7 +807,7 @@ const dd=document.getElementById('defdir'); dd.addEventListener('input',()=>docu
 const gridresEl=document.getElementById('gridres');
 gridresEl.addEventListener('change',()=>{
   const v=parseFloat(gridresEl.value);
-  gridRes=Math.min(5,Math.max(1, isNaN(v)?2:v));
+  gridRes=Math.min(5,Math.max(0.5, isNaN(v)?2:v));
   gridresEl.value=gridRes;
   scheduleGrid();
 });
@@ -802,6 +829,8 @@ function snapshot(){
       limits:[...activeLimits].sort((a,b)=>a-b),
       defdir:parseInt(document.getElementById('defdir').value,10),
       base:baseKey,
+      husOn:document.getElementById('husOn').checked,
+      husSkjerm:document.getElementById('husSkjerm').checked,
     },
     pumps:pumps.map(p=>({num:p.num,lat:p.latlng.lat,lng:p.latlng.lng,brg:p.brg})),
     grid:{ sw:{lat:corners.sw.lat,lng:corners.sw.lng}, ne:{lat:corners.ne.lat,lng:corners.ne.lng}, res:gridRes, on:gridOn },
@@ -824,6 +853,9 @@ function restore(d){
   if(opp.defdir!=null){ const dd=document.getElementById('defdir');
     dd.value=opp.defdir; document.getElementById('defdirv').textContent=opp.defdir+'°'; }
   if(opp.base!=null) setBase(opp.base);
+  if(opp.husOn!=null) document.getElementById('husOn').checked=opp.husOn;
+  if(opp.husSkjerm!=null) document.getElementById('husSkjerm').checked=opp.husSkjerm;
+  husEndret();   // synk underboksens deaktivert-tilstand + tegning med lastet fil
   opp.pumps.forEach(p=>{ addPump(L.latLng(p.lat,p.lng),p.brg,p.num); });
   pumpNo=pumps.reduce((m,p)=>Math.max(m,p.num),0);
   sel=null; positionControls();
@@ -899,11 +931,22 @@ async function loadHusrekker(){
         .catch(e=>{ console.warn(`Husrekka ${f} hoppes over:`,e); return null; })));
     husRekker=rekker.filter(Boolean);
     tegnHusrekker();
+    scheduleGrid();   // rekkene kom asynkront – regn rutenettet på nytt med skjerming
     return;
   }
   console.warn('Ingen husrekker funnet – index.json utilgjengelig fra alle kandidatene.');
 }
-document.getElementById('husOn').addEventListener('change',tegnHusrekker);
+// «Husrekker på» er hovedbryteren for hele polygon-løsningen – tegning OG
+// beregning. «Skjermer» er et underpunkt som bare betyr noe når husrekkene
+// er på, og deaktiveres derfor når hovedbryteren er av. Skjerming av/på
+// endrer bare beregningen (husPolysLocal), ikke tegningen.
+function husEndret(){
+  document.getElementById('husSkjerm').disabled=!document.getElementById('husOn').checked;
+  tegnHusrekker();
+  scheduleGrid();
+}
+document.getElementById('husOn').addEventListener('change',husEndret);
+document.getElementById('husSkjerm').addEventListener('change',()=>scheduleGrid());
 loadHusrekker();
 
 // ---- akustikk-boot ----
