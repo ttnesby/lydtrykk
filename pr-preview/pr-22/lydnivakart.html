@@ -192,13 +192,13 @@
     <div class="grp">
       <label class="l">Husrekker</label>
       <div class="felt">
-        <label class="ck"><input type="checkbox" id="husOn" checked> Vis husrekkene</label>
+        <label class="ck"><input type="checkbox" id="husOn" checked> Husrekker på</label>
       </div>
-      <div class="felt">
-        <label class="ck"><input type="checkbox" id="husSkjerm" checked> Husrekkene skjermer (−10 dB)</label>
+      <div class="felt" style="margin-left:22px">
+        <label class="ck"><input type="checkbox" id="husSkjerm" checked> Skjermer (−10 dB)</label>
       </div>
       <p class="note">Husrekkene tegnes som grå polygoner (fra <code>husrekker/polygoner/</code> på GitHub, EUREF89/UTM 33). Ny rekke = ny JSON-fil pluss én linje i <code>index.json</code> på main – synlig her uten ny deploy.</p>
-      <p class="note">Med skjerming på trekkes 10 dB fra hver utedels bidrag der siktlinja til ruta krysser et hus, og ruter inne i husene regnes ikke (grenseverdiene gjelder utendørs) – ekvidistansene brytes ved fasadene. Av-krysset regnes som om husene ikke fantes; sammenlign gjerne de to for å se effekten.</p>
+      <p class="note">Underboksen styrer om husene også skjermer i beregningen: 10 dB trekkes fra hver utedels bidrag der siktlinja til ruta krysser et hus, og ruter inne i husene regnes ikke (grenseverdiene gjelder utendørs) – ekvidistansene brytes ved fasadene. Uten skjerming – eller med husrekkene helt av – regnes det som om husene ikke fantes; sammenlign gjerne de to for å se effekten.</p>
     </div>
 
     <div class="grp">
@@ -600,10 +600,13 @@ function pumpsLocal(origin){
 }
 // Husrekkene i rutenettets lokale plan, flatt for WASM-kallet: alle hjørnene
 // som [x0,y0,x1,…] pluss antall hjørner per polygon (grensene i den flate
-// arrayen). null når skjerming er av eller ingen rekker er lastet – da får
-// workerne ingen polygoner og bruker den uskjermede eksporten.
+// arrayen). null når husrekkene er av (hovedbryteren), skjerming er av
+// (underboksen) eller ingen rekker er lastet – da får workerne ingen
+// polygoner og bruker den uskjermede eksporten.
 function husPolysLocal(origin){
-  if(!document.getElementById('husSkjerm').checked || !husRekker.length) return null;
+  if(!document.getElementById('husOn').checked
+     || !document.getElementById('husSkjerm').checked
+     || !husRekker.length) return null;
   const antall=[], xy=[];
   husRekker.forEach(r=>{
     antall.push(r.punkter.length);
@@ -826,6 +829,7 @@ function snapshot(){
       limits:[...activeLimits].sort((a,b)=>a-b),
       defdir:parseInt(document.getElementById('defdir').value,10),
       base:baseKey,
+      husOn:document.getElementById('husOn').checked,
       husSkjerm:document.getElementById('husSkjerm').checked,
     },
     pumps:pumps.map(p=>({num:p.num,lat:p.latlng.lat,lng:p.latlng.lng,brg:p.brg})),
@@ -849,7 +853,9 @@ function restore(d){
   if(opp.defdir!=null){ const dd=document.getElementById('defdir');
     dd.value=opp.defdir; document.getElementById('defdirv').textContent=opp.defdir+'°'; }
   if(opp.base!=null) setBase(opp.base);
+  if(opp.husOn!=null) document.getElementById('husOn').checked=opp.husOn;
   if(opp.husSkjerm!=null) document.getElementById('husSkjerm').checked=opp.husSkjerm;
+  husEndret();   // synk underboksens deaktivert-tilstand + tegning med lastet fil
   opp.pumps.forEach(p=>{ addPump(L.latLng(p.lat,p.lng),p.brg,p.num); });
   pumpNo=pumps.reduce((m,p)=>Math.max(m,p.num),0);
   sel=null; positionControls();
@@ -930,10 +936,16 @@ async function loadHusrekker(){
   }
   console.warn('Ingen husrekker funnet – index.json utilgjengelig fra alle kandidatene.');
 }
-document.getElementById('husOn').addEventListener('change',tegnHusrekker);
-// Skjerming av/på endrer bare beregningen (husPolysLocal), ikke tegningen av
-// selve polygonene – de to boksene er bevisst uavhengige, så man kan se
-// husene uten skjerming og omvendt.
+// «Husrekker på» er hovedbryteren for hele polygon-løsningen – tegning OG
+// beregning. «Skjermer» er et underpunkt som bare betyr noe når husrekkene
+// er på, og deaktiveres derfor når hovedbryteren er av. Skjerming av/på
+// endrer bare beregningen (husPolysLocal), ikke tegningen.
+function husEndret(){
+  document.getElementById('husSkjerm').disabled=!document.getElementById('husOn').checked;
+  tegnHusrekker();
+  scheduleGrid();
+}
+document.getElementById('husOn').addEventListener('change',husEndret);
 document.getElementById('husSkjerm').addEventListener('change',()=>scheduleGrid());
 loadHusrekker();
 
