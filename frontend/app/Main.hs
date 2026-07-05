@@ -92,6 +92,12 @@ foreign export javascript "acoustics_gridStripe sync"
 foreign export javascript "acoustics_gridStripeSkjermet sync"
   js_gridStripeSkjermet :: Double -> JSVal -> JSVal -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
 
+-- Verste fasadepunkt per husrekke ('Lyd.Felt.versteFasadepunkt'). Også en ny
+-- eksport av samme grunn som over: hovedtråden feature-detekterer på navnet
+-- og lar featuren ligge med en eldre binær.
+foreign export javascript "acoustics_fasadeVerst sync"
+  js_fasadeVerst :: Double -> JSVal -> JSVal -> JSVal -> Int -> JSVal -> IO ()
+
 foreign import javascript unsafe "$1.length" js_arrLen :: JSVal -> Int
 foreign import javascript unsafe "$1[$2]" js_arrAt :: JSVal -> Int -> Double
 foreign import javascript unsafe "$1[$2] = $3" js_arrSett :: JSVal -> Int -> Double -> IO ()
@@ -147,15 +153,38 @@ js_gridStripeSkjermet :: Double -> JSVal -> JSVal -> JSVal -> Int -> Int -> Int 
 js_gridStripeSkjermet src pumperXYB polyXY polyAntall radStart radSlutt kolonner celleM ut =
   sequence_ (zipWith (js_arrSett ut) [0 ..] verdier)
   where
-    verdier = rutenettStripeSkjermet (simKilde src) (lesPlasserte pumperXYB) polygoner stripe
+    verdier = rutenettStripeSkjermet (simKilde src) (lesPlasserte pumperXYB) (lesPolygoner polyXY polyAntall) stripe
     stripe = Stripe radStart radSlutt kolonner (Meter celleM)
+
+-- | Verste fasadepunkt per polygon (= 'versteFasadepunkt'): skriver
+-- [x, y, nivå] per polygon inn i 'ut' (Float64Array med 3·antall polygoner
+-- elementer, samme rekkefølge som 'polyAntall'). 'medSkjerm' ≠ 0 → nivået
+-- regnes med skjerming/maskering mot alle polygonene; 0 → uskjermet (samme
+-- valg som rutenettet, styrt av samme avkrysning). NaN i alle tre feltene
+-- når polygonet er degenerert. Ingen pumper gir nivå -Infinity.
+js_fasadeVerst :: Double -> JSVal -> JSVal -> JSVal -> Int -> JSVal -> IO ()
+js_fasadeVerst src pumperXYB polyXY polyAntall medSkjerm ut =
+  sequence_ (concat (zipWith skriv [0 ..] polygoner))
+  where
+    polygoner = lesPolygoner polyXY polyAntall
+    skjermMed = if medSkjerm /= 0 then polygoner else []
+    plasserte = lesPlasserte pumperXYB
+    skriv i poly =
+      let (x, y, niv) = case versteFasadepunkt (simKilde src) plasserte skjermMed poly of
+            Just (Punkt px py, n) -> (px, py, n)
+            Nothing -> (0 / 0, 0 / 0, 0 / 0)
+       in [js_arrSett ut (3 * i) x, js_arrSett ut (3 * i + 1) y, js_arrSett ut (3 * i + 2) niv]
+
+-- | Polygonene fra flat hjørne-array [x0,y0,x1,y1,…] + antall hjørner per
+-- polygon (grensene mellom polygonene i den flate arrayen).
+lesPolygoner :: JSVal -> JSVal -> [Polygon]
+lesPolygoner polyXY polyAntall = gaa 0 antallHjoerner
+  where
     antallHjoerner = [truncate (js_arrAt polyAntall i) :: Int | i <- [0 .. js_arrLen polyAntall - 1]]
-    polygoner = gaa 0 antallHjoerner
-      where
-        gaa _ [] = []
-        gaa fra (n : rest) =
-          [Punkt (js_arrAt polyXY (2 * (fra + i))) (js_arrAt polyXY (2 * (fra + i) + 1)) | i <- [0 .. n - 1]]
-            : gaa (fra + n) rest
+    gaa _ [] = []
+    gaa fra (n : rest) =
+      [Punkt (js_arrAt polyXY (2 * (fra + i))) (js_arrAt polyXY (2 * (fra + i) + 1)) | i <- [0 .. n - 1]]
+        : gaa (fra + n) rest
 
 -- | Pumpene fra flat stride-3-array [x0,y0,retning0, x1,y1,retning1, …].
 lesPlasserte :: JSVal -> [PlassertKilde]

@@ -35,10 +35,12 @@ export function normaliserOppsett(d) {
     lyd, vegg, kab, limits,
     defdir: s.defdir != null ? s.defdir : null,
     base: s.base != null ? s.base : null,
-    // husrekker på/av og skjerming (additive felter); mangler de → null =
-    // behold nåværende. husOn er hovedbryteren, husSkjerm underpunktet.
+    // husrekker på/av, skjerming og verste fasadepunkt (additive felter);
+    // mangler de → null = behold nåværende. husOn er hovedbryteren,
+    // husSkjerm/husVerst underpunktene.
     husOn: s.husOn != null ? !!s.husOn : null,
     husSkjerm: s.husSkjerm != null ? !!s.husSkjerm : null,
+    husVerst: s.husVerst != null ? !!s.husVerst : null,
     // eldre filer kan ha et 'nabos'-felt – det ignoreres stille, siden
     // rutenettet erstattet enkeltpunkt-sjekken
     pumps: (d.pumps || []).map(p => ({ num: p.num, lat: p.lat, lng: p.lng, brg: p.brg })),
