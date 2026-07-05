@@ -44,7 +44,7 @@ andre offsettene er A = 10 dBA og B = 5 dBA strengere enn C.
   vise/skjule en grense; celler med samme dB(A) (f.eks. A dag = B kveld =
   C natt) henger sammen og fargelegges likt.
 - **Rutenett og dB-ekvidistanser**: to draggbare hjørnemarkører setter et
-  rutenett (justerbar oppløsning, 1–5 m, default 2 m) som regner **kumulativt**
+  rutenett (justerbar oppløsning, 0,5–5 m, default 2 m) som regner **kumulativt**
   (logaritmisk summert) lydnivå fra alle utedeler for hver rute — i en pool av
   Web Workers (`gridWorker.js`, egen WASM-instans hver) for ekte parallell
   beregning. Ekvidistanser (konturlinjer, via en enkel

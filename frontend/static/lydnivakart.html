@@ -167,7 +167,7 @@
       </div>
       <div class="felt">
         <label class="fl" for="gridres">Oppløsning (m)</label>
-        <input type="number" id="gridres" min="1" max="5" step="0.5" value="2">
+        <input type="number" id="gridres" min="0.5" max="5" step="0.5" value="2">
       </div>
       <p class="note" id="gridinfo"></p>
       <p class="note">De to blå hjørnene i kartet setter rutenettets område (nedre venstre / øvre høyre) – dra dem dit du vil dekke. Kumulativt lydnivå for hver rute regnes i bakgrunnen (en pool av Web Workers, én WASM-instans hver) og oppdateres automatisk når du flytter en utedel, endrer lydkilde eller drar et hjørne. Avslått viser kartet i stedet hver utedels egen halvbue.</p>
@@ -804,7 +804,7 @@ const dd=document.getElementById('defdir'); dd.addEventListener('input',()=>docu
 const gridresEl=document.getElementById('gridres');
 gridresEl.addEventListener('change',()=>{
   const v=parseFloat(gridresEl.value);
-  gridRes=Math.min(5,Math.max(1, isNaN(v)?2:v));
+  gridRes=Math.min(5,Math.max(0.5, isNaN(v)?2:v));
   gridresEl.value=gridRes;
   scheduleGrid();
 });
