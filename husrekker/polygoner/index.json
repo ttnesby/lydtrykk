@@ -2,6 +2,7 @@
     "filer": [
         "h-rekka.json",
         "k-rekka.json",
-        "l-rekka.json"
+        "l-rekka.json",
+        "q-rekka.json"
     ]
 }
