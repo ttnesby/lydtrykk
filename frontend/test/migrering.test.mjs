@@ -67,6 +67,19 @@ test('manglende felter: limits null (behold nåværende), defaults for lydkilde'
   assert.equal(opp.view, null);
 });
 
+test('husSkjerm: additivt felt – med i fila går gjennom, mangler → null', () => {
+  const med = normaliserOppsett({
+    format: 'lydnivakart', version: 3,
+    settings: { lyd: 50, vegg: false, kab: 0, husSkjerm: false },
+  });
+  assert.equal(med.husSkjerm, false);
+  const uten = normaliserOppsett({
+    format: 'lydnivakart', version: 3,
+    settings: { lyd: 50, vegg: false, kab: 0 },
+  });
+  assert.equal(uten.husSkjerm, null);   // eldre fil → behold nåværende tilstand
+});
+
 test('grid uten on-felt: gridOn er på (additivt felt, eldre v3-filer)', () => {
   const opp = normaliserOppsett({
     format: 'lydnivakart', version: 3,

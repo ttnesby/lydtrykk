@@ -87,6 +87,24 @@ test('marchingSquares: antall segmenter er symmetrisk om terskelen', () => {
   assert.equal(over.length, under.length);
 });
 
+test('marchingSquares: NaN-hjørne (maskert celle) hopper over cellen', () => {
+  // 2×2 med NØ = NaN og resten over grensen: uten guard ville idx vært 11
+  // (NaN > 5 er false) og lerp gitt NaN-koordinater rett i Leaflet.
+  assert.deepEqual(marchingSquares(new Float64Array([9, 9, 9, NaN]), 2, 2, 5), []);
+  // I et 3×3 der bare NV-cella berører NaN-hjørnet, tegnes resten fortsatt:
+  // konturen brytes ved den maskerte cellen i stedet for å forsvinne helt.
+  const grid = new Float64Array([
+    0, 0, 0,
+    0, 10, 0,
+    NaN, 0, 0,
+  ]);
+  const segs = marchingSquares(grid, 3, 3, 5);
+  assert.equal(segs.length, 3);   // øyas fjerde celle (mot NaN) er hoppet over
+  for (const [p0, p1] of segs) {
+    for (const v of [...p0, ...p1]) assert.ok(Number.isFinite(v), `NaN-koordinat: ${p0},${p1}`);
+  }
+});
+
 // boundarySegments-tester: konturens fortsettelse langs rutenettkanten.
 
 test('boundarySegments: felt helt under grensen gir ingen kantsegmenter', () => {
@@ -100,6 +118,16 @@ test('boundarySegments: felt helt over grensen tegner hele omkretsen', () => {
     [[0, 0], [0, 1]],
     [[1, 0], [1, 1]],
     [[0, 0], [1, 0]],
+    [[0, 1], [1, 1]],
+  ]);
+});
+
+test('boundarySegments: kantstykker som berører NaN hoppes over', () => {
+  // SV-hjørnet maskert: sør- og vestkanten (som bruker det hjørnet) droppes,
+  // nord- og østkanten tegnes som før – ingen NaN-interpolering.
+  const segs = boundarySegments(new Float64Array([NaN, 9, 9, 9]), 2, 2, 5);
+  assert.deepEqual(segs, [
+    [[1, 0], [1, 1]],
     [[0, 1], [1, 1]],
   ]);
 });

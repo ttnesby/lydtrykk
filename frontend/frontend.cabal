@@ -21,6 +21,7 @@ common options
       "-optl-Wl,--export=acoustics_dbSum"
       "-optl-Wl,--export=acoustics_grense"
       "-optl-Wl,--export=acoustics_gridStripe"
+      "-optl-Wl,--export=acoustics_gridStripeSkjermet"
     cpp-options:
       -DWASM
     build-depends:

@@ -85,6 +85,13 @@ foreign export javascript "acoustics_grense sync" js_grense :: Int -> Int -> Dou
 foreign export javascript "acoustics_gridStripe sync"
   js_gridStripe :: Double -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
 
+-- Skjermings-varianten er en NY eksport (ikke en utvidet signatur på den
+-- gamle): gridWorker.js feature-detekterer på navnet, og en eldre deployet
+-- binær ville ellers stille ignorert polygon-argumentene og regnet uten
+-- skjerming uten at noen merket det.
+foreign export javascript "acoustics_gridStripeSkjermet sync"
+  js_gridStripeSkjermet :: Double -> JSVal -> JSVal -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
+
 foreign import javascript unsafe "$1.length" js_arrLen :: JSVal -> Int
 foreign import javascript unsafe "$1[$2]" js_arrAt :: JSVal -> Int -> Double
 foreign import javascript unsafe "$1[$2] = $3" js_arrSett :: JSVal -> Int -> Double -> IO ()
@@ -127,15 +134,37 @@ js_gridStripe :: Double -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO (
 js_gridStripe src pumperXYB radStart radSlutt kolonner celleM ut =
   sequence_ (zipWith (js_arrSett ut) [0 ..] verdier)
   where
-    verdier = rutenettStripe (simKilde src) plasserte stripe
+    verdier = rutenettStripe (simKilde src) (lesPlasserte pumperXYB) stripe
     stripe = Stripe radStart radSlutt kolonner (Meter celleM)
-    antall = js_arrLen pumperXYB `div` 3
-    plasserte =
-      [ PlassertKilde
-          (Punkt (js_arrAt pumperXYB (i * 3)) (js_arrAt pumperXYB (i * 3 + 1)))
-          (js_arrAt pumperXYB (i * 3 + 2))
-      | i <- [0 .. antall - 1]
-      ]
+
+-- | Som 'js_gridStripe', men med husrekke-polygoner og skjerming
+-- (= 'rutenettStripeSkjermet'): celler inne i et polygon får NaN (maskeres
+-- av tegnesiden), og kildebidrag med brutt siktlinje får det faste
+-- skjermingsfradraget. 'polyXY' er alle polygonhjørnene flatt
+-- [x0,y0,x1,y1,…] i samme lokale plan som pumpene, 'polyAntall' antall
+-- hjørner per polygon (grensene mellom polygonene i den flate arrayen).
+js_gridStripeSkjermet :: Double -> JSVal -> JSVal -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
+js_gridStripeSkjermet src pumperXYB polyXY polyAntall radStart radSlutt kolonner celleM ut =
+  sequence_ (zipWith (js_arrSett ut) [0 ..] verdier)
+  where
+    verdier = rutenettStripeSkjermet (simKilde src) (lesPlasserte pumperXYB) polygoner stripe
+    stripe = Stripe radStart radSlutt kolonner (Meter celleM)
+    antallHjoerner = [truncate (js_arrAt polyAntall i) :: Int | i <- [0 .. js_arrLen polyAntall - 1]]
+    polygoner = gaa 0 antallHjoerner
+      where
+        gaa _ [] = []
+        gaa fra (n : rest) =
+          [Punkt (js_arrAt polyXY (2 * (fra + i))) (js_arrAt polyXY (2 * (fra + i) + 1)) | i <- [0 .. n - 1]]
+            : gaa (fra + n) rest
+
+-- | Pumpene fra flat stride-3-array [x0,y0,retning0, x1,y1,retning1, …].
+lesPlasserte :: JSVal -> [PlassertKilde]
+lesPlasserte pumperXYB =
+  [ PlassertKilde
+      (Punkt (js_arrAt pumperXYB (i * 3)) (js_arrAt pumperXYB (i * 3 + 1)))
+      (js_arrAt pumperXYB (i * 3 + 2))
+  | i <- [0 .. js_arrLen pumperXYB `div` 3 - 1]
+  ]
 
 -- | Grenseverdi (dBA) fra NS 8175-tabellen, = 'grense'. Indeksene følger
 -- enum-rekkefølgen: klasse 0–3 = A, B+, B, C; tidsrom 0–2 = Dag, Kveld, Natt

@@ -35,6 +35,8 @@ export function normaliserOppsett(d) {
     lyd, vegg, kab, limits,
     defdir: s.defdir != null ? s.defdir : null,
     base: s.base != null ? s.base : null,
+    // husrekke-skjerming (additivt felt); mangler det → null = behold nåværende
+    husSkjerm: s.husSkjerm != null ? !!s.husSkjerm : null,
     // eldre filer kan ha et 'nabos'-felt – det ignoreres stille, siden
     // rutenettet erstattet enkeltpunkt-sjekken
     pumps: (d.pumps || []).map(p => ({ num: p.num, lat: p.lat, lng: p.lng, brg: p.brg })),
