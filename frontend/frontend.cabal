@@ -35,5 +35,6 @@ executable app
   build-depends:
     base <5,
     miso >=1.9,
-    lyd-core
+    lyd-core,
+    vector
   default-language: Haskell2010
