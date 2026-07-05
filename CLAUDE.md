@@ -195,8 +195,8 @@ of each contour is readable without map-reading habits.
   transferable `Float64Array`. A worker computes its stripe with a single
   `acoustics_gridStripe` call — or `acoustics_gridStripeSkjermet` when the
   message carries husrekke polygons (`husPolysLocal` projects them into the
-  grid's local plane per round; the «Husrekkene skjermer» checkbox and loaded
-  rows gate this). A binary that predates `acoustics_gridStripe` is treated
+  grid's local plane per round; the «Husrekker på» master checkbox, its
+  «Skjermer» sub-checkbox and loaded rows all gate this). A binary that predates `acoustics_gridStripe` is treated
   like a missing core — the worker replies `{error: true}` and the round is
   skipped. A binary that has `gridStripe` but predates the *shielded* export
   falls back to the unshielded call and flags the reply `uskjermet: true`
@@ -245,15 +245,17 @@ The house rows at Dyst live as one JSON file per row in `husrekker/polygoner/`
 (`{navn, crs: "EPSG:25833", polygon: [[east, north], ...]}`), listed by
 `index.json` in the same directory — adding a row = new file + one line in the
 manifest. The map page loads them at boot (independent of the wasm core) and
-draws them as grey, `interactive:false` polygons, toggled by the «Husrekker»
-checkbox. Fetching uses the same hybrid pattern as `default.json`: raw from
+draws them as grey, `interactive:false` polygons, toggled by the «Husrekker
+på» master checkbox (which gates the *whole* polygon feature, drawing and
+computation). Fetching uses the same hybrid pattern as `default.json`: raw from
 `main` first (row edits on `main` reach users without a deploy — `husrekker/**`
 is in the workflow's `paths-ignore` for that reason), then relative paths
 (`dist`/PR preview, dev server from the repo root). `build.sh` copies
 `husrekker/` into `dist/husrekker/` as the bundled fallback.
 
-The rows also *shield* in the grid computation (separate «Husrekkene
-skjermer» checkbox, persisted as `settings.husSkjerm`, additive — no version
+The rows also *shield* in the grid computation via the «Skjermer (−10 dB)»
+sub-checkbox — disabled (and moot) when the master checkbox is off; both are
+persisted (`settings.husOn`/`settings.husSkjerm`, additive — no version
 bump): see the shielding model under `lyd-core` and the worker fallback under
 "Parallelism". Since the rows load asynchronously and independently of the
 wasm core, `loadHusrekker()` calls `scheduleGrid()` once they arrive so an

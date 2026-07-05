@@ -58,8 +58,10 @@ andre offsettene er A = 10 dBA og B = 5 dBA strengere enn C.
   av/på i panelet). Polygonene ligger som JSON-filer i repoet
   (`husrekker/polygoner/`, EUREF89/UTM sone 33) og hentes live fra GitHub —
   se eget avsnitt under.
-- **Husrekke-skjerming**: rekkene inngår også i rutenett-beregningen (egen
-  av/på-boks, «Husrekkene skjermer»). Ruter inne i husene maskeres —
+- **Husrekke-skjerming**: rekkene inngår også i rutenett-beregningen.
+  «Husrekker på» er hovedbryteren for hele polygon-løsningen (tegning og
+  beregning); underboksen «Skjermer (−10 dB)» styrer selve fradraget og er
+  deaktivert når hovedbryteren er av. Ruter inne i husene maskeres —
   utendørs grenseverdier gjelder utenfor fasade, så ekvidistansene brytes
   der — og en utedels bidrag får et fast fradrag på **10 dB** der siktlinja
   til ruta krysser et hus. Modellen er binær og bevisst konservativ: en
