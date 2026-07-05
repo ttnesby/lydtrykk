@@ -110,6 +110,8 @@
     .sub{ font-size:11px; }
     input[type=range], .btn{ font-size:13px; }
   }
+  /* dB-etikett på verste fasadepunkt per husrekke */
+  .fasadetip{ font-size:11px; font-weight:600; padding:1px 5px; }
 </style>
 </head>
 <body>
@@ -197,7 +199,11 @@
       <div class="felt" style="margin-left:22px">
         <label class="ck"><input type="checkbox" id="husSkjerm" checked> Skjermer (−10 dB)</label>
       </div>
+      <div class="felt" style="margin-left:22px">
+        <label class="ck"><input type="checkbox" id="husVerst" checked> Verste punkt per rekke</label>
+      </div>
       <p class="note">Husrekkene tegnes som grå polygoner (fra <code>husrekker/polygoner/</code> på GitHub, EUREF89/UTM 33). Ny rekke = ny JSON-fil pluss én linje i <code>index.json</code> på main – synlig her uten ny deploy.</p>
+      <p class="note">«Verste punkt per rekke» prøver punkter langs hver rekkes fasader (1 m utenfor, 1 m mellomrom) og markerer punktet med høyest kumulativt lydnivå – verste punkt ved naboens fasade, direkte mot vedtektsteksten. Markøren farges som den strengeste aktive grensen punktet overskrider (grå = under alle).</p>
       <p class="note">Underboksen styrer om husene også skjermer i beregningen: 10 dB trekkes fra hver utedels bidrag der siktlinja til ruta krysser et hus, og ruter inne i husene regnes ikke (grenseverdiene gjelder utendørs) – ekvidistansene brytes ved fasadene. Uten skjerming – eller med husrekkene helt av – regnes det som om husene ikke fantes; sammenlign gjerne de to for å se effekten.</p>
     </div>
 
@@ -487,7 +493,10 @@ function removePump(id){
 // beregning. Rutenettets to hjørner er draggbare markører; hvilket av dem som
 // fysisk ligger sørvest/nordøst avgjøres på nytt hver gang (effectiveBounds),
 // så det ikke spiller noen rolle om brukeren drar dem forbi hverandre.
-const MAX_CELLS=200000;   // tak på celletall – oppløsningen grovnes automatisk over dette
+// Tak på celletall – oppløsningen grovnes automatisk over dette. 400k gir
+// ekte 0,5 m/celle over hele feltet (standardrutenettet ~322×254 m ≈ 328k
+// celler); under drag beskytter DRAG_COARSEN uansett responsen.
+const MAX_CELLS=400000;
 let gridOn=true;          // av/på for rutenett+ekvidistanser (se setGridOn)
 let gridRes=2;            // meter mellom celler, justerbar i panelet
 let corners={sw:null, ne:null};
@@ -590,10 +599,28 @@ function setGridOn(on){
 }
 
 // Worker-pool: opprettes én gang og gjenbrukes (ikke ny Worker per beregning).
-const POOL_SIZE=Math.min(8, navigator.hardwareConcurrency||2);
+// Størrelsen skalerer med maskinen (to kjerner holdes av til hovedtråden) –
+// den skjermede beregningen er tung ved fin oppløsning, så flere kjerner gir
+// direkte kortere ventetid på store rutenett.
+const POOL_SIZE=Math.min(16, Math.max(2,(navigator.hardwareConcurrency||4)-2));
 let gridWorkers=[];
-try{ gridWorkers=Array.from({length:POOL_SIZE},()=>new Worker('gridWorker.js',{type:'module'})); }
-catch(e){ console.warn('Kunne ikke starte grid-workere – rutenettet er avslått:',e); }
+function startPool(){
+  try{ gridWorkers=Array.from({length:POOL_SIZE},()=>new Worker('gridWorker.js',{type:'module'})); }
+  catch(e){ gridWorkers=[]; console.warn('Kunne ikke starte grid-workere – rutenettet er avslått:',e); }
+}
+startPool();
+// En jobb som ryker på fristen maler videre inne i workeren selv om runden
+// er forkastet – uten opprydding blir den liggende og tette meldingskøen, og
+// alle senere runder ser ut til å henge. Ved fristbrudd bygges derfor hele
+// poolen på nytt (én gang per runde), så etterslepet dør med de gamle
+// workerne.
+let sistePoolOppbygging=0;
+function gjenoppbyggPool(reqId){
+  if(reqId<=sistePoolOppbygging) return;
+  sistePoolOppbygging=reqId;
+  gridWorkers.forEach(w=>{ try{ w.terminate(); }catch(_){} });
+  startPool();
+}
 
 function pumpsLocal(origin){
   return pumps.map(p=>({ ...toLocal(p.latlng,origin), brg:p.brg }));
@@ -623,6 +650,10 @@ function computeGrid(rows,cols,res,origin){
   const jobs=gridWorkers.map((w,i)=>{
     const rowStart=i*perWorker, rowEnd=Math.min(rows,rowStart+perWorker);
     if(rowStart>=rowEnd) return Promise.resolve(undefined);
+    // Frist skalert med stripestørrelsen: skjermet beregning med tett
+    // digitaliserte polygoner er målt til ~1 ms/celle – 3 ms/celle gir
+    // margin, pluss grunnfrist til wasm-oppstart i ferske workere.
+    const fristMs=15000+(rowEnd-rowStart)*cols*3;
     return new Promise(resolve=>{
       let timeoutId=null;
       const cleanup=()=>{
@@ -635,7 +666,7 @@ function computeGrid(rows,cols,res,origin){
         if(e.data.error){ document.getElementById('gridinfo').textContent='Rutenett utilgjengelig – beregningskjernen kunne ikke lastes i bakgrunnsarbeiderne.'; resolve(null); return; }
         resolve(e.data); };
       const onErr=e=>{ cleanup(); console.warn('Grid-worker feilet – hopper over denne runden:',e.message||e); resolve(null); };
-      timeoutId=setTimeout(()=>{ cleanup(); console.warn('Grid-worker brukte for lang tid – hopper over denne runden.'); resolve(null); },15000);
+      timeoutId=setTimeout(()=>{ cleanup(); console.warn('Grid-worker brukte for lang tid – bygger poolen på nytt og hopper over denne runden.'); gjenoppbyggPool(reqId); resolve(null); },fristMs);
       w.addEventListener('message',onMsg);
       w.addEventListener('error',onErr);
       w.addEventListener('messageerror',onErr);
@@ -664,6 +695,11 @@ async function runGridLoop(){
   while(gridDirty){
     gridDirty=false;
     await recomputeGrid();
+    // Fasadepunktene henger på samme planlegger (samme utløsere: pumper,
+    // lydkilde, brytere), men er uavhengige av gridOn – de vises også i
+    // halvbue-modus. Hoppes over under drag (synkront kall på hovedtråden);
+    // dragend gir alltid en siste runde med interacting=false.
+    if(!interacting) oppdaterFasadeVerst();
   }
   gridBusy=false;
 }
@@ -831,6 +867,7 @@ function snapshot(){
       base:baseKey,
       husOn:document.getElementById('husOn').checked,
       husSkjerm:document.getElementById('husSkjerm').checked,
+      husVerst:document.getElementById('husVerst').checked,
     },
     pumps:pumps.map(p=>({num:p.num,lat:p.latlng.lat,lng:p.latlng.lng,brg:p.brg})),
     grid:{ sw:{lat:corners.sw.lat,lng:corners.sw.lng}, ne:{lat:corners.ne.lat,lng:corners.ne.lng}, res:gridRes, on:gridOn },
@@ -855,7 +892,8 @@ function restore(d){
   if(opp.base!=null) setBase(opp.base);
   if(opp.husOn!=null) document.getElementById('husOn').checked=opp.husOn;
   if(opp.husSkjerm!=null) document.getElementById('husSkjerm').checked=opp.husSkjerm;
-  husEndret();   // synk underboksens deaktivert-tilstand + tegning med lastet fil
+  if(opp.husVerst!=null) document.getElementById('husVerst').checked=opp.husVerst;
+  husEndret();   // synk underboksenes deaktivert-tilstand + tegning med lastet fil
   opp.pumps.forEach(p=>{ addPump(L.latLng(p.lat,p.lng),p.brg,p.num); });
   pumpNo=pumps.reduce((m,p)=>Math.max(m,p.num),0);
   sel=null; positionControls();
@@ -936,17 +974,67 @@ async function loadHusrekker(){
   }
   console.warn('Ingen husrekker funnet – index.json utilgjengelig fra alle kandidatene.');
 }
+// ---- verste fasadepunkt per husrekke ----
+// Prøvepunktene og verste-punkt-valget ligger i kjernen
+// (Lyd.Felt.versteFasadepunkt via acoustics_fasadeVerst) – JS projiserer bare
+// inn/ut av det lokale planet og tegner markørene. Origo er CENTER (vilkårlig,
+// uavhengig av rutenettet – punktene skal finnes også med rutenettet av).
+// Kalles fra runGridLoop (samme utløsere som rutenettet); mangler eksporten
+// (eldre deployet binær) ligger featuren stille med én console-advarsel.
+let fasadeLayers=[], fasadeVarslet=false;
+function oppdaterFasadeVerst(){
+  fasadeLayers.forEach(l=>map.removeLayer(l)); fasadeLayers=[];
+  if(!WASM || !husRekker.length || !pumps.length
+     || !document.getElementById('husOn').checked
+     || !document.getElementById('husVerst').checked) return;
+  if(typeof WASM.acoustics_fasadeVerst!=='function'){
+    if(!fasadeVarslet){ fasadeVarslet=true;
+      console.warn('Verste fasadepunkt krever en nyere beregningskjerne (acoustics_fasadeVerst mangler) – bygg lokalt eller bruk PR-previewen.'); }
+    return;
+  }
+  const origin={lat:CENTER[0],lng:CENTER[1]};
+  const pl=pumpsLocal(origin);
+  const xyb=new Float64Array(pl.length*3);
+  pl.forEach((p,i)=>{ xyb[i*3]=p.x; xyb[i*3+1]=p.y; xyb[i*3+2]=p.brg; });
+  const antall=[], xy=[];
+  husRekker.forEach(r=>{ antall.push(r.punkter.length);
+    r.punkter.forEach(pt=>{ const l=toLocal(pt,origin); xy.push(l.x,l.y); }); });
+  const ut=new Float64Array(husRekker.length*3);
+  WASM.acoustics_fasadeVerst(srcLevel(), xyb, new Float64Array(xy), new Float64Array(antall),
+    document.getElementById('husSkjerm').checked?1:0, ut);
+  const aktive=[...activeLimits].sort((x,y)=>x-y);
+  husRekker.forEach((r,i)=>{
+    const niv=ut[i*3+2];
+    if(!Number.isFinite(niv)) return;   // NaN = degenerert polygon
+    const ll=fromLocal(ut[i*3],ut[i*3+1],origin);
+    // farges som den høyeste aktive grensen punktet overskrider (samme
+    // lesning som fargefyllet i rutenettet); grå under alle aktive grenser
+    let over=null; aktive.forEach(lim=>{ if(niv>lim) over=lim; });
+    const farge=over!=null?heat(over):'#667';
+    fasadeLayers.push(L.circleMarker(ll,
+      {radius:5,color:farge,weight:2.5,fillColor:'#fff',fillOpacity:.9,interactive:false})
+      .bindTooltip(`${r.navn?r.navn+' · ':''}${niv.toFixed(1).replace('.',',')}`,
+        {permanent:true,direction:'top',offset:[0,-6],className:'fasadetip'})
+      .addTo(map));
+  });
+}
+
 // «Husrekker på» er hovedbryteren for hele polygon-løsningen – tegning OG
-// beregning. «Skjermer» er et underpunkt som bare betyr noe når husrekkene
-// er på, og deaktiveres derfor når hovedbryteren er av. Skjerming av/på
-// endrer bare beregningen (husPolysLocal), ikke tegningen.
+// beregning. «Skjermer» og «Verste punkt per rekke» er underpunkter som bare
+// betyr noe når husrekkene er på, og deaktiveres derfor når hovedbryteren er
+// av. Underboksene endrer bare beregningen/markørene, ikke tegningen av
+// polygonene.
 function husEndret(){
-  document.getElementById('husSkjerm').disabled=!document.getElementById('husOn').checked;
+  const av=!document.getElementById('husOn').checked;
+  document.getElementById('husSkjerm').disabled=av;
+  document.getElementById('husVerst').disabled=av;
   tegnHusrekker();
   scheduleGrid();
 }
 document.getElementById('husOn').addEventListener('change',husEndret);
+// scheduleGrid-løkka oppdaterer også fasadepunktene, se runGridLoop
 document.getElementById('husSkjerm').addEventListener('change',()=>scheduleGrid());
+document.getElementById('husVerst').addEventListener('change',()=>scheduleGrid());
 loadHusrekker();
 
 // ---- akustikk-boot ----

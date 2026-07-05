@@ -97,7 +97,11 @@ conservative `skjermingDb` = 10 dB deduction (real rows shield 15–25 dB; the
 margin also covers unmodelled facade reflections). Grazing/touching sight
 lines do NOT shield (conservative near row ends), and a source inside or
 within 1 m of a polygon has that polygon exempted (`egetPolygon` — a pump
-click can land numerically inside its own facade). All simulator policy
+click can land numerically inside its own facade). On top of the shielding
+model sits `versteFasadepunkt` (exposed as `acoustics_fasadeVerst`): sample
+points along a polygon's perimeter (`fasadepunkter`, 1 m outside the facade,
+≤ 1 m apart) and pick the one with the highest cumulative level — the map's
+«Verste punkt per rekke» markers. All simulator policy
 deliberately kept out of `Beregning`. Everything else in the repo — the
 calculator UI, the map simulator, and the grid workers — is a thin caller of
 these modules. `lyd-core/test/Spec.hs` pins them down with golden values
@@ -109,7 +113,7 @@ it never re-implements it.
 ### WASM export surface (`frontend/app/Main.hs`)
 
 Under `#ifdef WASM` (set via `cpp-options: -DWASM` only when
-`arch(wasm32)`, see `frontend/frontend.cabal`), `Main.hs` exports seven
+`arch(wasm32)`, see `frontend/frontend.cabal`), `Main.hs` exports eight
 *synchronous* JSFFI functions layered directly on `Lyd.Beregning`/`Lyd.Felt`:
 `acoustics_dirGain`, `acoustics_reqDist`, `acoustics_levelAt`,
 `acoustics_dbSum`, `acoustics_grense` (limit table by clamped
@@ -119,13 +123,17 @@ from this at boot, so the NS 8175 numbers have no JS copy either; the
 enum order), `acoustics_gridStripe` (the batch grid call: pumps as a flat
 stride-3 Float64Array, results written into a JS-allocated Float64Array via a
 `$1[$2] = $3` unsafe import — one export call per worker row-stripe instead
-of cells×(pumps+1) scalar calls), and `acoustics_gridStripeSkjermet` (same
+of cells×(pumps+1) scalar calls), `acoustics_gridStripeSkjermet` (same
 plus husrekke polygons as a flat vertex array + per-polygon vertex counts;
-see the shielding model under `lyd-core` above). The shielded variant is a
+see the shielding model under `lyd-core` above), and `acoustics_fasadeVerst`
+(worst facade point per polygon, `[x, y, level]` stride-3 into a JS-allocated
+array; called on the main thread from `oppdaterFasadeVerst`, skipped during
+drag). The shielded variant is a
 *new* export name rather than extra arguments on `acoustics_gridStripe`, on
 purpose: `gridWorker.js` feature-detects it by name, and an older deployed
 binary would otherwise silently ignore extra arguments and compute without
-shielding. Synchronous exports (the `" sync"` suffix
+shielding; `acoustics_fasadeVerst` is feature-detected the same way (the
+markers just stay off, with one console warning). Synchronous exports (the `" sync"` suffix
 in the `foreign export javascript` declarations) are required because both
 `lydnivakart.html` and `gridWorker.js` call them inside tight draw/compute
 loops — an async/Promise-based export would be unworkable there. The linker
@@ -187,10 +195,16 @@ color of the *highest* active limit it exceeds — flat concentric bands
 of each contour is readable without map-reading habits.
 
 - **Parallelism**: a persistent pool of Web Workers (`gridWorker.js`, sized
-  `min(8, hardwareConcurrency)`), each independently loading its own
+  `min(16, hardwareConcurrency - 2)` — the shielded computation costs ~1
+  ms/cell with densely digitized polygons, so cores translate directly into
+  wait time), each independently loading its own
   `app.wasm` instance via the shared boot sequence in `wasmInit.js` (dynamic
   `import()`, not static — a static import failure would otherwise prevent
   `self.onmessage` from ever being registered and hang the worker forever).
+  The per-job timeout scales with stripe size (`15 s + 3 ms/cell`), and on a
+  timeout the whole pool is terminated and rebuilt (`gjenoppbyggPool`): a
+  timed-out job keeps grinding inside its worker otherwise, clogging the
+  message queue so every later round also appears to hang.
   Rows are split contiguously across the pool; each worker returns a
   transferable `Float64Array`. A worker computes its stripe with a single
   `acoustics_gridStripe` call — or `acoustics_gridStripeSkjermet` when the
@@ -254,12 +268,16 @@ is in the workflow's `paths-ignore` for that reason), then relative paths
 `husrekker/` into `dist/husrekker/` as the bundled fallback.
 
 The rows also *shield* in the grid computation via the «Skjermer (−10 dB)»
-sub-checkbox — disabled (and moot) when the master checkbox is off; both are
-persisted (`settings.husOn`/`settings.husSkjerm`, additive — no version
-bump): see the shielding model under `lyd-core` and the worker fallback under
-"Parallelism". Since the rows load asynchronously and independently of the
-wasm core, `loadHusrekker()` calls `scheduleGrid()` once they arrive so an
-already-rendered grid is recomputed with shielding.
+sub-checkbox, and get a worst-facade-point marker via the «Verste punkt per
+rekke» sub-checkbox (`oppdaterFasadeVerst`, piggybacked on the
+`runGridLoop` scheduler but independent of `gridOn`; skipped while dragging)
+— both sub-checkboxes are disabled (and moot) when the master checkbox is
+off, and all three are persisted
+(`settings.husOn`/`settings.husSkjerm`/`settings.husVerst`, additive — no
+version bump): see the shielding model under `lyd-core` and the worker
+fallback under "Parallelism". Since the rows load asynchronously and
+independently of the wasm core, `loadHusrekker()` calls `scheduleGrid()` once
+they arrive so an already-rendered grid is recomputed with shielding.
 
 ### `default.json` hybrid live-fetch
 

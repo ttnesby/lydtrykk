@@ -13,7 +13,7 @@ tests :: TestTree
 tests =
   testGroup
     "lyd-core"
-    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper, feltTests, skjermTests]
+    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper, feltTests, skjermTests, fasadeTests]
 
 grenseTests :: TestTree
 grenseTests =
@@ -466,6 +466,81 @@ skjermTests =
     vegg = [Punkt (-5) (-1), Punkt 5 (-1), Punkt 5 1, Punkt (-5) 1]
     bakVeggen = PlassertKilde (Punkt 0 10) 180
     foranVeggen = Punkt 0 (-10)
+
+-- | Fasadepunktene ('Lyd.Felt'): prøvepunkter langs husrekke-omkretsen og
+-- «verste punkt per rekke» — operasjonaliseringen av verste punkt ved
+-- naboens fasade.
+fasadeTests :: TestTree
+fasadeTests =
+  testGroup
+    "fasadepunkter (verste punkt per husrekke, Lyd.Felt)"
+    [ testCase "alle punkter utenfor polygonet, ca. fasadeOffsetM fra kanten" $ do
+        let pts = fasadepunkter kvadrat
+        assertBool "har punkter" (not (null pts))
+        assertBool "alle utenfor" (not (any (punktIPolygon kvadrat) pts))
+        assertBool "alle ~1 m fra kanten" $
+          all (\p -> abs (kantAvstand kvadrat p - fasadeOffsetM) < 1e-9) pts,
+      testCase "punkttetthet: minst omkrets/fasadePunktAvstandM punkter" $
+        -- kvadrat med sidekant 4 → omkrets 16
+        assertBool "≥ 16 punkter" (length (fasadepunkter kvadrat) >= 16),
+      testCase "degenerert polygon (< 3 hjørner) gir ingen punkter" $ do
+        fasadepunkter [Punkt 0 0, Punkt 1 0] @?= []
+        versteFasadepunkt (frittstaaende 53) [bakVeggen] [] [Punkt 0 0, Punkt 1 0] @?= Nothing,
+      testCase "verste punkt vender mot kilden (nordsida av veggen)" $
+        case versteFasadepunkt (frittstaaende 53) [bakVeggen] [vegg] vegg of
+          Nothing -> assertFailure "fant ikke noe fasadepunkt"
+          Just (pt, niv) -> do
+            assertBool "på nordsida (mot kilden)" (pY pt > 1)
+            -- fri siktlinje på kildesida: nivået er det uskjermede
+            assertBool "= uskjermet nivå i punktet" $
+              abs (niv - dBA (nivaaIPunkt (frittstaaende 53) [bakVeggen] pt)) < 1e-9,
+      testCase "ingen kilder: verste punkt finnes, nivået er -Infinity" $
+        case versteFasadepunkt (frittstaaende 53) [] [vegg] vegg of
+          Nothing -> assertFailure "fant ikke noe fasadepunkt"
+          Just (_, niv) -> assertBool "-Infinity" (isInfinite niv && niv < 0),
+      testProperty "skjermet verste punkt aldri over uskjermet" $
+        forAll genFeltOppsett $ \(kilde, plasserte) ->
+          forAll genRektangel $ \rekt ->
+            let skjermet = versteFasadepunkt kilde plasserte [rekt] rekt
+                uskjermet = versteFasadepunkt kilde plasserte [] rekt
+             in case (skjermet, uskjermet) of
+                  (Just (_, s), Just (_, u)) -> property (s <= u + 1e-9)
+                  _ -> counterexample "manglet fasadepunkt" (property False),
+      -- pinner den optimaliserte hindre-stien (nivaaMedHindre) mot
+      -- spesifikasjons-implementasjonen nivaaIPunktSkjermet
+      testProperty "versteFasadepunkt = maksimum av nivaaIPunktSkjermet over fasadepunktene" $
+        forAll genFeltOppsett $ \(kilde, plasserte) ->
+          forAll genPolygoner $ \polys ->
+            forAll genRektangel $ \rekt ->
+              let fasit =
+                    [ n
+                    | pt <- fasadepunkter rekt,
+                      let n = nivaaIPunktSkjermet kilde plasserte polys pt,
+                      not (isNaN n)
+                    ]
+               in case versteFasadepunkt kilde plasserte polys rekt of
+                    Nothing -> property (null fasit)
+                    Just (pt, n) ->
+                      counterexample (show (pt, n)) $
+                        not (null fasit)
+                          && n == maximum fasit
+                          && n == nivaaIPunktSkjermet kilde plasserte polys pt
+    ]
+  where
+    kvadrat = [Punkt (-2) (-2), Punkt 2 (-2), Punkt 2 2, Punkt (-2) 2]
+    vegg = [Punkt (-5) (-1), Punkt 5 (-1), Punkt 5 1, Punkt (-5) 1]
+    bakVeggen = PlassertKilde (Punkt 0 10) 180
+    -- minste avstand fra p til polygonets kanter (testens egen fasit-geometri)
+    kantAvstand poly p =
+      minimum [segAvstand p a b | (a, b) <- zip poly (drop 1 poly ++ take 1 poly)]
+    segAvstand (Punkt px py) (Punkt ax ay) (Punkt bx by) =
+      let dx = bx - ax
+          dy = by - ay
+          l2 = dx * dx + dy * dy
+          t = if l2 == 0 then 0 else max 0 (min 1 (((px - ax) * dx + (py - ay) * dy) / l2))
+          nx = ax + t * dx
+          ny = ay + t * dy
+       in sqrt ((px - nx) * (px - nx) + (py - ny) * (py - ny))
 
 kumulativTests :: TestTree
 kumulativTests =

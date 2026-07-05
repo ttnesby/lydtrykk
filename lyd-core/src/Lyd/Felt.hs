@@ -15,6 +15,12 @@ module Lyd.Felt
     egetPolygon,
     skjermingDb,
 
+    -- * Fasadepunkter (verste punkt per husrekke)
+    fasadeOffsetM,
+    fasadePunktAvstandM,
+    fasadepunkter,
+    versteFasadepunkt,
+
     -- * Lydfelt
     nivaaIPunkt,
     nivaaIPunktSkjermet,
@@ -25,6 +31,8 @@ module Lyd.Felt
 where
 
 import Data.Fixed (mod')
+import Data.List (maximumBy)
+import Data.Ord (comparing)
 import Lyd.Beregning
 
 -- | Punkt i det lokale planet: meter øst (x) og nord (y) fra rutenettets
@@ -77,11 +85,19 @@ kanter ps = zip ps (drop 1 ps ++ take 1 ps)
 -- rutenettceller og pumpeposisjoner, der 'egetPolygon'-marginen fanger
 -- kanttilfellet som betyr noe.
 punktIPolygon :: Polygon -> Punkt -> Bool
-punktIPolygon poly (Punkt x y) = odd (length kryssedeKanter)
+punktIPolygon poly = punktIKanter (kanter poly)
+
+-- | Stråletesten mot en ferdigbygd kantliste. De varme stiene
+-- ('rutenettStripeSkjermet'\/'versteFasadepunkt') gjenbruker kantene fra
+-- 'Hinder' i stedet for å zippe dem opp på nytt per celle×polygon —
+-- allokeringen dominerte kjøretiden med tett digitaliserte polygoner
+-- (59–97 hjørner per reell husrekke).
+punktIKanter :: [(Punkt, Punkt)] -> Punkt -> Bool
+punktIKanter ks (Punkt x y) = odd (length kryssedeKanter)
   where
     kryssedeKanter =
       [ ()
-      | (Punkt x1 y1, Punkt x2 y2) <- kanter poly,
+      | (Punkt x1 y1, Punkt x2 y2) <- ks,
         (y1 > y) /= (y2 > y),
         x < (x2 - x1) * (y - y1) / (y2 - y1) + x1
       ]
@@ -102,7 +118,12 @@ segmenterKrysser a b c d =
 -- «eget polygon»-unntaket og bounding-boks-forfilteret ligger i
 -- felt-funksjonene som bruker den.)
 segmentKrysserPolygon :: Punkt -> Punkt -> Polygon -> Bool
-segmentKrysserPolygon a b poly = any (uncurry (segmenterKrysser a b)) (kanter poly)
+segmentKrysserPolygon a b poly = segmentKrysserKanter a b (kanter poly)
+
+-- | Som 'segmentKrysserPolygon', mot en ferdigbygd kantliste (se
+-- 'punktIKanter' om hvorfor).
+segmentKrysserKanter :: Punkt -> Punkt -> [(Punkt, Punkt)] -> Bool
+segmentKrysserKanter a b = any (uncurry (segmenterKrysser a b))
 
 -- | Er polygonet kildens «eget» hus? En pumpe plassert med kartklikk kan
 -- lande numerisk innenfor (eller helt inntil) fasadepolygonet den står på —
@@ -196,41 +217,56 @@ rutenettStripe kilde plasserte stripe =
 -- resultatet identisk med 'rutenettStripe'.
 rutenettStripeSkjermet :: Kilde -> [PlassertKilde] -> [Polygon] -> Stripe -> [Double]
 rutenettStripeSkjermet kilde plasserte polygoner stripe =
-  [ verdi (Punkt (fromIntegral kol * celle) (fromIntegral rad * celle))
+  [ nivaaMedHindre kilde kildeHindre hindre (Punkt (fromIntegral kol * celle) (fromIntegral rad * celle))
   | rad <- [stRadStart stripe .. stRadSlutt stripe - 1],
     kol <- [0 .. stKolonner stripe - 1]
   ]
   where
     Meter celle = stCelleM stripe
-    hindre = map tilHinder (filter ((>= 3) . length) polygoner)
-    -- per kilde: hindrene som ikke er kildens eget hus
-    kildeHindre =
-      [ (p, [h | h <- hindre, not (egetPolygon (pkPos p) (hiPoly h))])
-      | p <- plasserte
-      ]
-    verdi pt
-      | any (\h -> iBoks h pt && punktIPolygon (hiPoly h) pt) hindre = 0 / 0
-      | otherwise = dBA (kumulativ [bidrag p hs | (p, hs) <- kildeHindre])
-      where
-        bidrag p hs =
-          let Desibel l = punktBidrag kilde p pt
-              blokkert h =
-                boksTreffes (pkPos p) pt h
-                  && segmentKrysserPolygon (pkPos p) pt (hiPoly h)
-           in Desibel (l - if any blokkert hs then skjermingDb else 0)
+    hindre = lagHindre polygoner
+    kildeHindre = lagKildeHindre hindre plasserte
 
--- | Polygon med forhåndsberegnet bounding-boks — forfilteret som gjør
--- sikttesten billig når kilde og celle ligger på samme side av rekka.
+-- | Polygon med forhåndsberegnede kanter og bounding-boks — kantlisten
+-- bygges én gang per stripe\/fasadekall (se 'punktIKanter'), og boksen er
+-- forfilteret som gjør sikttesten billig når kilde og punkt ligger på samme
+-- side av rekka.
 data Hinder = Hinder
   { hiPoly :: Polygon,
+    hiKanter :: [(Punkt, Punkt)],
     hiMinX, hiMinY, hiMaxX, hiMaxY :: !Double
   }
 
 tilHinder :: Polygon -> Hinder
-tilHinder poly = Hinder poly (minimum xs) (minimum ys) (maximum xs) (maximum ys)
+tilHinder poly = Hinder poly (kanter poly) (minimum xs) (minimum ys) (maximum xs) (maximum ys)
   where
     xs = map pX poly
     ys = map pY poly
+
+lagHindre :: [Polygon] -> [Hinder]
+lagHindre = map tilHinder . filter ((>= 3) . length)
+
+-- | Per kilde: hindrene som ikke er kildens eget hus ('egetPolygon') —
+-- regnes én gang, ikke per punkt.
+lagKildeHindre :: [Hinder] -> [PlassertKilde] -> [(PlassertKilde, [Hinder])]
+lagKildeHindre hindre plasserte =
+  [ (p, [h | h <- hindre, not (egetPolygon (pkPos p) (hiPoly h))])
+  | p <- plasserte
+  ]
+
+-- | Den varme stien: samme regnestykke som 'nivaaIPunktSkjermet' (pinnes av
+-- en test), men mot ferdigbygde 'Hinder' — delt mellom rutenettet og
+-- fasadepunktene.
+nivaaMedHindre :: Kilde -> [(PlassertKilde, [Hinder])] -> [Hinder] -> Punkt -> Double
+nivaaMedHindre kilde kildeHindre hindre pt
+  | any (\h -> iBoks h pt && punktIKanter (hiKanter h) pt) hindre = 0 / 0
+  | otherwise = dBA (kumulativ [bidrag p hs | (p, hs) <- kildeHindre])
+  where
+    bidrag p hs =
+      let Desibel l = punktBidrag kilde p pt
+          blokkert h =
+            boksTreffes (pkPos p) pt h
+              && segmentKrysserKanter (pkPos p) pt (hiKanter h)
+       in Desibel (l - if any blokkert hs then skjermingDb else 0)
 
 iBoks :: Hinder -> Punkt -> Bool
 iBoks h (Punkt x y) =
@@ -243,3 +279,70 @@ boksTreffes (Punkt ax ay) (Punkt bx by) h =
     && max ax bx >= hiMinX h
     && min ay by <= hiMaxY h
     && max ay by >= hiMinY h
+
+-- Fasadepunkter --------------------------------------------------------------
+
+-- | Fasadepunktenes avstand utenfor fasaden (m). Grenseverdiene gjelder
+-- utenfor fasade; 1 m holder punktene klar av eget polygon (streifende
+-- siktlinjer) uten å flytte dem merkbart fra vedtektstekstens «ved fasaden».
+fasadeOffsetM :: Double
+fasadeOffsetM = 1
+
+-- | Største avstand mellom to nabo-fasadepunkter langs en kant (m).
+fasadePunktAvstandM :: Double
+fasadePunktAvstandM = 1
+
+-- | Prøvepunkter langs polygonets omkrets: hver kant deles i steg på høyst
+-- 'fasadePunktAvstandM', og hvert punkt skyves 'fasadeOffsetM' ut fra
+-- fasaden. Kantens sluttpunkt utelates — hjørnet dekkes av neste kants
+-- startpunkt, så tett digitaliserte polygoner (mange korte kanter) ikke gir
+-- doble punkter. Utover-retningen finnes ved å teste kandidaten mot
+-- polygonet, så hjørnerekkefølgen (med/mot klokka) spiller ingen rolle.
+-- Degenererte polygoner gir [].
+fasadepunkter :: Polygon -> [Punkt]
+fasadepunkter poly
+  | length poly < 3 = []
+  | otherwise = concatMap kantpunkter (kanter poly)
+  where
+    kantpunkter (Punkt ax ay, Punkt bx by)
+      | len <= 0 = []
+      | otherwise =
+          [ utenfor (ax + t * dx) (ay + t * dy)
+          | i <- [0 .. steg - 1],
+            let t = fromIntegral i / fromIntegral steg
+          ]
+      where
+        dx = bx - ax
+        dy = by - ay
+        len = sqrt (dx * dx + dy * dy)
+        steg = max 1 (ceiling (len / fasadePunktAvstandM)) :: Int
+        -- normalen (dy,-dx)/len; velg siden som havner utenfor polygonet
+        utenfor px py =
+          let kand = Punkt (px + fasadeOffsetM * dy / len) (py - fasadeOffsetM * dx / len)
+           in if punktIPolygon poly kand
+                then Punkt (px - fasadeOffsetM * dy / len) (py + fasadeOffsetM * dx / len)
+                else kand
+
+-- | Verste (høyeste) kumulative nivå blant polygonets fasadepunkter —
+-- operasjonaliseringen av «verste punkt ved naboens fasade». Nivået regnes
+-- med 'nivaaIPunktSkjermet' mot 'polygoner' (send inn alle husrekkene:
+-- rekka skjermer sin egen bakside, og punkter som havner inne i en annen
+-- rekke maskeres/hoppes over; send @[]@ for uskjermet nivå). Ingen kilder
+-- gir -Infinity som nivå; 'Nothing' bare når polygonet er degenerert eller
+-- alle punktene er maskert.
+versteFasadepunkt :: Kilde -> [PlassertKilde] -> [Polygon] -> Polygon -> Maybe (Punkt, Double)
+versteFasadepunkt kilde plasserte polygoner poly =
+  case gyldige of
+    [] -> Nothing
+    xs -> Just (maximumBy (comparing snd) xs)
+  where
+    -- samme varme sti som rutenettet ('nivaaMedHindre') — hindrene bygges én
+    -- gang for alle fasadepunktene, ikke per punkt
+    hindre = lagHindre polygoner
+    kildeHindre = lagKildeHindre hindre plasserte
+    gyldige =
+      [ (pt, niv)
+      | pt <- fasadepunkter poly,
+        let niv = nivaaMedHindre kilde kildeHindre hindre pt,
+        not (isNaN niv)
+      ]

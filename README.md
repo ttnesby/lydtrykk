@@ -74,6 +74,14 @@ andre offsettene er A = 10 dBA og B = 5 dBA strengere enn C.
   sikttesten. Skjermingen regnes i Haskell-kjernen
   (`Lyd.Felt`, eksporten `acoustics_gridStripeSkjermet`); en eldre binær
   uten eksporten regner uskjermet (konservativt) og sier fra i panelet.
+- **Verste punkt per rekke**: underboksen «Verste punkt per rekke» prøver
+  punkter langs hver husrekkes fasader (1 m utenfor fasaden, høyst 1 m
+  mellomrom) og markerer punktet med høyest kumulativt lydnivå — «verste
+  punkt ved naboens fasade», operasjonalisert direkte mot vedtektsteksten,
+  med samme skjermingsvalg som rutenettet. Markøren farges som den høyeste
+  aktive grensen punktet overskrider (grå = under alle), med dB-verdien som
+  fast etikett. Prøvingen og verste-punkt-valget ligger i kjernen
+  (`Lyd.Felt.versteFasadepunkt`, eksporten `acoustics_fasadeVerst`).
 - **Lagre / last oppsett**: «Lagre til fil» laster ned hele tilstanden som en
   menneskelesbar JSON-fil i nedlastingsmappa — lydkilde, valgte soner,
   standardretning, karttype, alle utedeler (plassering + vinkel), rutenettets
