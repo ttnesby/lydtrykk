@@ -97,7 +97,17 @@ conservative `skjermingDb` = 10 dB deduction (real rows shield 15–25 dB; the
 margin also covers unmodelled facade reflections). Grazing/touching sight
 lines do NOT shield (conservative near row ends), and a source inside or
 within 1 m of a polygon has that polygon exempted (`egetPolygon` — a pump
-click can land numerically inside its own facade). On top of the shielding
+click can land numerically inside its own facade). Polygons are simplified
+before masking/sight tests (`forenkletPolygon`, Douglas–Peucker at
+`forenkleToleranseM` = 0.2 m — well inside the model noise of the flat 10 dB
+deduction; real rows are digitized with 60–300 vertices): both the
+spec path (`nivaaIPunktSkjermet`) and the hot path simplify identically, so
+the cell-for-cell pinning tests stay exact. The hot path
+(`nivaaMedHindre`, shared by the grid and the facade points) runs against
+precomputed `Hinder` values — edges in flat unboxed vectors, bbox prefilter,
+per-source `egetPolygon` exemption — and the stripe functions return a
+Storable vector (contiguous pinned memory) so the wasm side can bulk-copy a
+whole stripe out of linear memory in one FFI crossing. On top of the shielding
 model sits `versteFasadepunkt` (exposed as `acoustics_fasadeVerst`): sample
 points along a polygon's perimeter (`fasadepunkter`, 1 m outside the facade,
 ≤ 1 m apart) and pick the one with the highest cumulative level — the map's
@@ -121,9 +131,14 @@ class/tidsrom enum indices — the map page builds its whole `GRENSE` matrix
 from this at boot, so the NS 8175 numbers have no JS copy either; the
 `KLASSER`/`TIDSROM` array order in `lydnivakart.html` must match the Haskell
 enum order), `acoustics_gridStripe` (the batch grid call: pumps as a flat
-stride-3 Float64Array, results written into a JS-allocated Float64Array via a
-`$1[$2] = $3` unsafe import — one export call per worker row-stripe instead
-of cells×(pumps+1) scalar calls), `acoustics_gridStripeSkjermet` (same
+stride-3 Float64Array, the whole result stripe copied into the JS-allocated
+Float64Array in ONE `Float64Array(__exports.memory.buffer, ptr, n)` bulk copy
+— input arrays are bulk-copied in the same way; per-element `$1[$2] = $3`
+writes used to dominate the wasm runtime at hundreds of thousands of cells.
+`__exports` is in scope in JSFFI import snippets via the closure
+`post-link.mjs` generates, and the view must be rebuilt per call because
+`memory.buffer` is replaced when the wasm memory grows),
+`acoustics_gridStripeSkjermet` (same
 plus husrekke polygons as a flat vertex array + per-polygon vertex counts;
 see the shielding model under `lyd-core` above), and `acoustics_fasadeVerst`
 (worst facade point per polygon, `[x, y, level]` stride-3 into a JS-allocated
@@ -195,9 +210,10 @@ color of the *highest* active limit it exceeds — flat concentric bands
 of each contour is readable without map-reading habits.
 
 - **Parallelism**: a persistent pool of Web Workers (`gridWorker.js`, sized
-  `min(16, hardwareConcurrency - 2)` — the shielded computation costs ~1
-  ms/cell with densely digitized polygons, so cores translate directly into
-  wait time), each independently loading its own
+  `min(16, hardwareConcurrency - 2)` — the shielded computation used to cost
+  ~1 ms/cell with densely digitized polygons before the core got its
+  vectorized hot path + polygon simplification + bulk-copy FFI; cores still
+  translate directly into wait time on large grids), each independently loading its own
   `app.wasm` instance via the shared boot sequence in `wasmInit.js` (dynamic
   `import()`, not static — a static import failure would otherwise prevent
   `self.onmessage` from ever being registered and hang the worker forever).
@@ -230,6 +246,14 @@ of each contour is readable without map-reading habits.
   in-flight computation, collapsing bursts (e.g. continuous pointer-drag
   events) into exactly one more pass once the current one finishes, instead
   of queuing an ever-growing backlog of stale work.
+- **Progress**: while a round is in flight, the grid info line shows a
+  stripe counter (`startFramdrift`/`stripeFerdig` in `lydnivakart.html`),
+  and on full-resolution rounds (not during drag) each worker stripe is
+  painted into the fill canvas as it arrives — a visible south→north wave.
+  Contours still wait for the complete grid (marching squares needs every
+  cell); the progressive fill reuses `fyllLayer`, so the final `renderFyll`
+  replaces it seamlessly, and an aborted round repaints `lastGrid` so no
+  half-painted field is left behind.
 - **Resolution during interaction**: while `interacting` is true (set on
   pump/corner `drag`, cleared on `dragend`), `gridDims()` multiplies the
   configured resolution by `DRAG_COARSEN` for fast live feedback; the final
