@@ -13,7 +13,7 @@ tests :: TestTree
 tests =
   testGroup
     "lyd-core"
-    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper, feltTests]
+    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper, feltTests, skjermTests]
 
 grenseTests :: TestTree
 grenseTests =
@@ -347,19 +347,125 @@ feltTests =
     ]
   where
     iOrigoMotNord = PlassertKilde (Punkt 0 0) 0
-    genPunkt = Punkt <$> choose (-50, 50) <*> choose (-50, 50)
-    -- Retninger også utenfor 0–360, som 'retningsavvik' skal tåle.
-    genPlassert = PlassertKilde <$> genPunkt <*> choose (-360, 720)
-    genFeltOppsett = do
-      lp0 <- choose (40, 70)
-      plasserte <- listOf genPlassert
-      pure (frittstaaende lp0, plasserte)
-    genStripe = do
-      radStart <- choose (0, 20)
-      rader <- choose (1, 8)
-      kolonner <- choose (1, 12)
-      celle <- choose (0.5, 5)
-      pure (Stripe radStart (radStart + rader) kolonner (Meter celle))
+
+-- Delte generatorer for lydfeltet ('feltTests'/'skjermTests') -----------------
+
+genPunkt :: Gen Punkt
+genPunkt = Punkt <$> choose (-50, 50) <*> choose (-50, 50)
+
+-- | Retninger også utenfor 0–360, som 'retningsavvik' skal tåle.
+genPlassert :: Gen PlassertKilde
+genPlassert = PlassertKilde <$> genPunkt <*> choose (-360, 720)
+
+genFeltOppsett :: Gen (Kilde, [PlassertKilde])
+genFeltOppsett = do
+  lp0 <- choose (40, 70)
+  plasserte <- listOf genPlassert
+  pure (frittstaaende lp0, plasserte)
+
+genStripe :: Gen Stripe
+genStripe = do
+  radStart <- choose (0, 20)
+  rader <- choose (1, 8)
+  kolonner <- choose (1, 12)
+  celle <- choose (0.5, 5)
+  pure (Stripe radStart (radStart + rader) kolonner (Meter celle))
+
+-- | Akse-parallelle rektangler som husrekke-polygoner — samme form som de
+-- reelle rekkene, og nok til å pinne bounding-boks-forfilteret.
+genRektangel :: Gen Polygon
+genRektangel = do
+  x0 <- choose (-40, 40)
+  y0 <- choose (-40, 40)
+  b <- choose (1, 25)
+  h <- choose (1, 25)
+  pure [Punkt x0 y0, Punkt (x0 + b) y0, Punkt (x0 + b) (y0 + h), Punkt x0 (y0 + h)]
+
+genPolygoner :: Gen [Polygon]
+genPolygoner = do
+  n <- choose (0, 3 :: Int)
+  vectorOf n genRektangel
+
+-- | Husrekke-skjermingen ('Lyd.Felt'): geometri-primitivene og den skjermede
+-- feltberegningen. Modellen: NaN-maskering inne i polygonene, fast
+-- 'skjermingDb'-fradrag per kildebidrag med brutt siktlinje, kildens eget
+-- hus unntatt.
+skjermTests :: TestTree
+skjermTests =
+  testGroup
+    "skjerming (husrekke-polygoner, Lyd.Felt)"
+    [ testCase "punktIPolygon: inne i og utenfor kvadratet" $ do
+        punktIPolygon kvadrat (Punkt 0 0) @?= True
+        punktIPolygon kvadrat (Punkt 3 0) @?= False
+        punktIPolygon kvadrat (Punkt 0 (-3)) @?= False,
+      testCase "punktIPolygon: konkav L-form, hakket er utenfor" $ do
+        punktIPolygon lForm (Punkt 1 1) @?= True
+        punktIPolygon lForm (Punkt 1 3) @?= True
+        punktIPolygon lForm (Punkt 3 3) @?= False,
+      testCase "segmentKrysserPolygon: tvers gjennom / helt utenom" $ do
+        segmentKrysserPolygon (Punkt (-5) 0) (Punkt 5 0) kvadrat @?= True
+        segmentKrysserPolygon (Punkt (-5) 5) (Punkt 5 5) kvadrat @?= False,
+      testCase "streifende segment langs en fasade skjermer ikke (konservativt)" $
+        segmentKrysserPolygon (Punkt (-5) 2) (Punkt 5 2) kvadrat @?= False,
+      testCase "brutt siktlinje: én kilde senkes nøyaktig skjermingDb" $
+        assertBool "≈ −10 dB" $
+          abs
+            ( nivaaIPunktSkjermet (frittstaaende 53) [bakVeggen] [vegg] foranVeggen
+                - (dBA (nivaaIPunkt (frittstaaende 53) [bakVeggen] foranVeggen) - skjermingDb)
+            )
+            < 1e-9,
+      testCase "fri siktlinje (samme side av veggen): uendret nivå" $
+        nivaaIPunktSkjermet (frittstaaende 53) [bakVeggen] [vegg] (Punkt 0 3)
+          @?= dBA (nivaaIPunkt (frittstaaende 53) [bakVeggen] (Punkt 0 3)),
+      testCase "eget polygon: kilde inne i veggen skjermes ikke av den" $
+        nivaaIPunktSkjermet (frittstaaende 53) [PlassertKilde (Punkt 0 0) 180] [vegg] foranVeggen
+          @?= dBA (nivaaIPunkt (frittstaaende 53) [PlassertKilde (Punkt 0 0) 180] foranVeggen),
+      testCase "eget polygon: kilde < 1 m fra fasaden er også unntatt" $
+        nivaaIPunktSkjermet (frittstaaende 53) [PlassertKilde (Punkt 0 1.5) 180] [vegg] foranVeggen
+          @?= dBA (nivaaIPunkt (frittstaaende 53) [PlassertKilde (Punkt 0 1.5) 180] foranVeggen),
+      testCase "punkt inne i et polygon maskeres (NaN)" $
+        assertBool "NaN" $
+          isNaN (nivaaIPunktSkjermet (frittstaaende 53) [bakVeggen] [vegg] (Punkt 0 0)),
+      testCase "degenerert polygon (< 3 hjørner) ignoreres" $
+        nivaaIPunktSkjermet (frittstaaende 53) [bakVeggen] [[Punkt 0 0, Punkt 1 0]] foranVeggen
+          @?= dBA (nivaaIPunkt (frittstaaende 53) [bakVeggen] foranVeggen),
+      testProperty "uten polygoner: identisk med rutenettStripe" $
+        forAll genFeltOppsett $ \(kilde, plasserte) ->
+          forAll genStripe $ \stripe ->
+            rutenettStripeSkjermet kilde plasserte [] stripe
+              === rutenettStripe kilde plasserte stripe,
+      testProperty "skjermet nivå aldri over uskjermet (utenfor polygonene)" $
+        forAll genFeltOppsett $ \(kilde, plasserte) ->
+          forAll genPolygoner $ \polys ->
+            forAll genPunkt $ \pt ->
+              not (any (`punktIPolygon` pt) polys) ==>
+                nivaaIPunktSkjermet kilde plasserte polys pt
+                  <= dBA (nivaaIPunkt kilde plasserte pt) + 1e-9,
+      testProperty "rutenettStripeSkjermet = nivaaIPunktSkjermet celle for celle" $
+        forAll genFeltOppsett $ \(kilde, plasserte) ->
+          forAll genPolygoner $ \polys ->
+            forAll genStripe $ \stripe ->
+              let Meter celle = stCelleM stripe
+                  forventet =
+                    [ nivaaIPunktSkjermet kilde plasserte polys (Punkt (fromIntegral kol * celle) (fromIntegral rad * celle))
+                    | rad <- [stRadStart stripe .. stRadSlutt stripe - 1],
+                      kol <- [0 .. stKolonner stripe - 1]
+                    ]
+                  fikk = rutenettStripeSkjermet kilde plasserte polys stripe
+                  -- NaN /= NaN, så maskerte celler sammenlignes eksplisitt
+                  likNaN a b = (isNaN a && isNaN b) || a == b
+               in counterexample (show (fikk, forventet)) $
+                    length fikk == length forventet && and (zipWith likNaN fikk forventet)
+    ]
+  where
+    -- kvadrat sentrert i origo, sidekant 4
+    kvadrat = [Punkt (-2) (-2), Punkt 2 (-2), Punkt 2 2, Punkt (-2) 2]
+    -- L-form: 4×4 med et 2×2-hakk i NØ-hjørnet
+    lForm = [Punkt 0 0, Punkt 4 0, Punkt 4 2, Punkt 2 2, Punkt 2 4, Punkt 0 4]
+    -- «veggen»: lav, bred rekke tvers over origo; kilden bak, punktet foran
+    vegg = [Punkt (-5) (-1), Punkt 5 (-1), Punkt 5 1, Punkt (-5) 1]
+    bakVeggen = PlassertKilde (Punkt 0 10) 180
+    foranVeggen = Punkt 0 (-10)
 
 kumulativTests :: TestTree
 kumulativTests =

@@ -87,8 +87,17 @@ directional correction), its inverse (level → distance), cumulative
 logarithmic summation for multiple sources, and required-cabinet-attenuation.
 `lyd-core/src/Lyd/Felt.hs` builds on it with the map simulator's grid field:
 placed sources in a local plane (bearing 0° = north, clockwise), per-point
-cumulative level with the 1 m distance clamp, and the row-stripe loop
-(`rutenettStripe`) that `acoustics_gridStripe` exposes — simulator policy
+cumulative level with the 1 m distance clamp, the row-stripe loop
+(`rutenettStripe`) that `acoustics_gridStripe` exposes, and the husrekke
+shielding model (`rutenettStripeSkjermet`/`nivaaIPunktSkjermet`, exposed as
+`acoustics_gridStripeSkjermet`): cells inside a building polygon become NaN
+(masked — outdoor limits apply outside facades), and a source contribution
+whose sight line properly crosses a polygon gets a flat, deliberately
+conservative `skjermingDb` = 10 dB deduction (real rows shield 15–25 dB; the
+margin also covers unmodelled facade reflections). Grazing/touching sight
+lines do NOT shield (conservative near row ends), and a source inside or
+within 1 m of a polygon has that polygon exempted (`egetPolygon` — a pump
+click can land numerically inside its own facade). All simulator policy
 deliberately kept out of `Beregning`. Everything else in the repo — the
 calculator UI, the map simulator, and the grid workers — is a thin caller of
 these modules. `lyd-core/test/Spec.hs` pins them down with golden values
@@ -100,17 +109,23 @@ it never re-implements it.
 ### WASM export surface (`frontend/app/Main.hs`)
 
 Under `#ifdef WASM` (set via `cpp-options: -DWASM` only when
-`arch(wasm32)`, see `frontend/frontend.cabal`), `Main.hs` exports six
+`arch(wasm32)`, see `frontend/frontend.cabal`), `Main.hs` exports seven
 *synchronous* JSFFI functions layered directly on `Lyd.Beregning`/`Lyd.Felt`:
 `acoustics_dirGain`, `acoustics_reqDist`, `acoustics_levelAt`,
 `acoustics_dbSum`, `acoustics_grense` (limit table by clamped
 class/tidsrom enum indices — the map page builds its whole `GRENSE` matrix
 from this at boot, so the NS 8175 numbers have no JS copy either; the
 `KLASSER`/`TIDSROM` array order in `lydnivakart.html` must match the Haskell
-enum order), and `acoustics_gridStripe` (the batch grid call: pumps as a flat
+enum order), `acoustics_gridStripe` (the batch grid call: pumps as a flat
 stride-3 Float64Array, results written into a JS-allocated Float64Array via a
 `$1[$2] = $3` unsafe import — one export call per worker row-stripe instead
-of cells×(pumps+1) scalar calls). Synchronous exports (the `" sync"` suffix
+of cells×(pumps+1) scalar calls), and `acoustics_gridStripeSkjermet` (same
+plus husrekke polygons as a flat vertex array + per-polygon vertex counts;
+see the shielding model under `lyd-core` above). The shielded variant is a
+*new* export name rather than extra arguments on `acoustics_gridStripe`, on
+purpose: `gridWorker.js` feature-detects it by name, and an older deployed
+binary would otherwise silently ignore extra arguments and compute without
+shielding. Synchronous exports (the `" sync"` suffix
 in the `foreign export javascript` declarations) are required because both
 `lydnivakart.html` and `gridWorker.js` call them inside tight draw/compute
 loops — an async/Promise-based export would be unworkable there. The linker
@@ -178,11 +193,20 @@ of each contour is readable without map-reading habits.
   `self.onmessage` from ever being registered and hang the worker forever).
   Rows are split contiguously across the pool; each worker returns a
   transferable `Float64Array`. A worker computes its stripe with a single
-  `acoustics_gridStripe` call (the cell loop runs in Haskell, `Lyd.Felt`);
-  a binary that predates that export is treated like a missing core — the
-  worker replies `{error: true}` and the round is skipped. There is no JS
-  per-cell fallback loop, on purpose: it would be a second copy of the
-  bearing/angle policy that `Lyd.Felt` owns.
+  `acoustics_gridStripe` call — or `acoustics_gridStripeSkjermet` when the
+  message carries husrekke polygons (`husPolysLocal` projects them into the
+  grid's local plane per round; the «Husrekker på» master checkbox, its
+  «Skjermer» sub-checkbox and loaded rows all gate this). A binary that predates `acoustics_gridStripe` is treated
+  like a missing core — the worker replies `{error: true}` and the round is
+  skipped. A binary that has `gridStripe` but predates the *shielded* export
+  falls back to the unshielded call and flags the reply `uskjermet: true`
+  (shown in the grid info line): computing without shielding only raises
+  levels, so the fallback is conservative-safe, unlike a silent wrong answer.
+  There is no JS per-cell fallback loop, on purpose: it would be a second
+  copy of the bearing/angle policy that `Lyd.Felt` owns. Masked (in-building)
+  cells arrive as NaN; `marchingSquares`/`boundarySegments` skip cells
+  touching a non-finite corner so contours break at facades instead of
+  feeding NaN coordinates to Leaflet.
 - **Coordinates**: grid math uses a local planar (equirectangular) projection
   from the grid's SW corner, *not* Leaflet's haversine helpers — cheap and
   accurate enough at lot/neighborhood scale, and avoids needing Leaflet
@@ -221,12 +245,21 @@ The house rows at Dyst live as one JSON file per row in `husrekker/polygoner/`
 (`{navn, crs: "EPSG:25833", polygon: [[east, north], ...]}`), listed by
 `index.json` in the same directory — adding a row = new file + one line in the
 manifest. The map page loads them at boot (independent of the wasm core) and
-draws them as grey, `interactive:false` polygons, toggled by the «Husrekker»
-checkbox. Fetching uses the same hybrid pattern as `default.json`: raw from
+draws them as grey, `interactive:false` polygons, toggled by the «Husrekker
+på» master checkbox (which gates the *whole* polygon feature, drawing and
+computation). Fetching uses the same hybrid pattern as `default.json`: raw from
 `main` first (row edits on `main` reach users without a deploy — `husrekker/**`
 is in the workflow's `paths-ignore` for that reason), then relative paths
 (`dist`/PR preview, dev server from the repo root). `build.sh` copies
 `husrekker/` into `dist/husrekker/` as the bundled fallback.
+
+The rows also *shield* in the grid computation via the «Skjermer (−10 dB)»
+sub-checkbox — disabled (and moot) when the master checkbox is off; both are
+persisted (`settings.husOn`/`settings.husSkjerm`, additive — no version
+bump): see the shielding model under `lyd-core` and the worker fallback under
+"Parallelism". Since the rows load asynchronously and independently of the
+wasm core, `loadHusrekker()` calls `scheduleGrid()` once they arrive so an
+already-rendered grid is recomputed with shielding.
 
 ### `default.json` hybrid live-fetch
 

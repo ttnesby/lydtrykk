@@ -41,6 +41,11 @@ export function bearing(from,to){
 // cellens midtverdi (snitt av hjørnene) mot grensen – standardtriks for å
 // unngå tvetydig sammenkobling av linjene. Returnerer segmenter i
 // (rad, kolonne)-koordinater: [[r0,c0],[r1,c1]].
+// NaN markerer maskerte celler (inne i en husrekke – se rutenettStripeSkjermet
+// i Lyd.Felt): celler som berører et NaN-hjørne hoppes over, så konturen
+// brytes ved husveggen i stedet for å interpolere mot et meningsløst hjørne.
+// (±Infinity forekommer bare i rutenett uten pumper, der ingenting tegnes
+// uansett – å hoppe over også dem endrer ingenting.)
 export function marchingSquares(grid,rows,cols,threshold){
   const segments=[];
   const at=(r,c)=>grid[r*cols+c];
@@ -48,6 +53,7 @@ export function marchingSquares(grid,rows,cols,threshold){
   for(let r=0;r<rows-1;r++){
     for(let c=0;c<cols-1;c++){
       const d=at(r,c), cc=at(r,c+1), b=at(r+1,c+1), a=at(r+1,c);
+      if(!(Number.isFinite(a)&&Number.isFinite(b)&&Number.isFinite(cc)&&Number.isFinite(d))) continue;
       const idx=(a>threshold?8:0)|(b>threshold?4:0)|(cc>threshold?2:0)|(d>threshold?1:0);
       if(idx===0||idx===15) continue;
       const left=()=>[r+lerp(d,a), c];
@@ -102,6 +108,7 @@ export function boundarySegments(grid,rows,cols,threshold,inset=0){
     Math.min(Math.max(c,d),cols-1-d),
   ];
   const emit=(p0,v0,p1,v1)=>{
+    if(!(Number.isFinite(v0)&&Number.isFinite(v1))) return;   // NaN = maskert celle (se marchingSquares)
     const o0=v0>threshold, o1=v1>threshold;
     if(!o0&&!o1) return;
     let seg;

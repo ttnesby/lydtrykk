@@ -44,7 +44,7 @@ andre offsettene er A = 10 dBA og B = 5 dBA strengere enn C.
   vise/skjule en grense; celler med samme dB(A) (f.eks. A dag = B kveld =
   C natt) henger sammen og fargelegges likt.
 - **Rutenett og dB-ekvidistanser**: to draggbare hjørnemarkører setter et
-  rutenett (justerbar oppløsning, 1–5 m, default 2 m) som regner **kumulativt**
+  rutenett (justerbar oppløsning, 0,5–5 m, default 2 m) som regner **kumulativt**
   (logaritmisk summert) lydnivå fra alle utedeler for hver rute — i en pool av
   Web Workers (`gridWorker.js`, egen WASM-instans hver) for ekte parallell
   beregning. Ekvidistanser (konturlinjer, via en enkel
@@ -58,6 +58,22 @@ andre offsettene er A = 10 dBA og B = 5 dBA strengere enn C.
   av/på i panelet). Polygonene ligger som JSON-filer i repoet
   (`husrekker/polygoner/`, EUREF89/UTM sone 33) og hentes live fra GitHub —
   se eget avsnitt under.
+- **Husrekke-skjerming**: rekkene inngår også i rutenett-beregningen.
+  «Husrekker på» er hovedbryteren for hele polygon-løsningen (tegning og
+  beregning); underboksen «Skjermer (−10 dB)» styrer selve fradraget og er
+  deaktivert når hovedbryteren er av. Ruter inne i husene maskeres —
+  utendørs grenseverdier gjelder utenfor fasade, så ekvidistansene brytes
+  der — og en utedels bidrag får et fast fradrag på **10 dB** der siktlinja
+  til ruta krysser et hus. Modellen er binær og bevisst konservativ: en
+  reell husrekke gir typisk 15–25 dB skjerming (ISO 9613-2 kapper
+  enkeltdiffraksjon på 20 dB), og marginen dekker at refleksjoner mellom
+  fasaderekker (~+3 dB nær fasade) ikke er medregnet — frittfeltmodell med
+  binær skjerming, uten refleksjonstillegg, underestimerer ikke nivået.
+  Streifende siktlinjer (langs en fasade, forbi en rekkeende) skjermer ikke,
+  og en pumpe montert inntil sitt eget hus får det huset unntatt fra
+  sikttesten. Skjermingen regnes i Haskell-kjernen
+  (`Lyd.Felt`, eksporten `acoustics_gridStripeSkjermet`); en eldre binær
+  uten eksporten regner uskjermet (konservativt) og sier fra i panelet.
 - **Lagre / last oppsett**: «Lagre til fil» laster ned hele tilstanden som en
   menneskelesbar JSON-fil i nedlastingsmappa — lydkilde, valgte soner,
   standardretning, karttype, alle utedeler (plassering + vinkel), rutenettets
@@ -139,6 +155,10 @@ r(lp, v) = r0 · 10^((lp0 − lp − korr(v)) / 20)
 
 Veggmontert utedel gir +3 dBA på `lp0` (refleksjon). Kumulativt nivå for
 flere kilder: `ltot = 10·log10(Σ 10^(l/10))`.
+
+Husrekke-skjerming i simulatoren: `li′ = li − 10` for bidrag der siktlinja
+kilde→punkt krysser et bygningspolygon (binært og konservativt; kildens eget
+hus er unntatt), og punkter inne i polygonene regnes ikke.
 
 > Forenklet modell — faktiske forhold med refleksjoner og skjerming kan
 > avvike. Se [PLAN.md](PLAN.md) for full spesifikasjon.
