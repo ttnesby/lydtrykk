@@ -86,7 +86,9 @@ class-C minimum), the free-field point-source model (inverse-square + cosine
 directional correction), its inverse (level → distance), cumulative
 logarithmic summation for multiple sources, and required-cabinet-attenuation.
 `lyd-core/src/Lyd/Felt.hs` builds on it with the map simulator's grid field:
-placed sources in a local plane (bearing 0° = north, clockwise), per-point
+placed sources in a local plane (bearing 0° = north, clockwise), each
+carrying its *own* `Kilde` (`pkKilde` on `PlassertKilde` — per-pump local
+source values are first-class in the core, not a JS layer on top), per-point
 cumulative level with the 1 m distance clamp, the row-stripe loop
 (`rutenettStripe`) that `acoustics_gridStripe` exposes, and the husrekke
 shielding model (`rutenettStripeSkjermet`/`nivaaIPunktSkjermet`, exposed as
@@ -123,7 +125,7 @@ it never re-implements it.
 ### WASM export surface (`frontend/app/Main.hs`)
 
 Under `#ifdef WASM` (set via `cpp-options: -DWASM` only when
-`arch(wasm32)`, see `frontend/frontend.cabal`), `Main.hs` exports eight
+`arch(wasm32)`, see `frontend/frontend.cabal`), `Main.hs` exports eleven
 *synchronous* JSFFI functions layered directly on `Lyd.Beregning`/`Lyd.Felt`:
 `acoustics_dirGain`, `acoustics_reqDist`, `acoustics_levelAt`,
 `acoustics_dbSum`, `acoustics_grense` (limit table by clamped
@@ -140,15 +142,25 @@ writes used to dominate the wasm runtime at hundreds of thousands of cells.
 `memory.buffer` is replaced when the wasm memory grows),
 `acoustics_gridStripeSkjermet` (same
 plus husrekke polygons as a flat vertex array + per-polygon vertex counts;
-see the shielding model under `lyd-core` above), and `acoustics_fasadeVerst`
+see the shielding model under `lyd-core` above), `acoustics_fasadeVerst`
 (worst facade point per polygon, `[x, y, level]` stride-3 into a JS-allocated
 array; called on the main thread from `oppdaterFasadeVerst`, skipped during
-drag). The shielded variant is a
+drag), and the three `…PerKilde` variants
+(`acoustics_gridStripePerKilde`, `acoustics_gridStripeSkjermetPerKilde`,
+`acoustics_fasadeVerstPerKilde`): same calls but with pumps as a flat
+*stride-4* array `[x, y, brg, nivaa]` — each pump's own effective source
+level at 1 m (the per-pump «Lokale verdier» feature) — instead of the shared
+`src` scalar the older exports keep for backward compatibility. The shielded
+variant is a
 *new* export name rather than extra arguments on `acoustics_gridStripe`, on
 purpose: `gridWorker.js` feature-detects it by name, and an older deployed
 binary would otherwise silently ignore extra arguments and compute without
 shielding; `acoustics_fasadeVerst` is feature-detected the same way (the
-markers just stay off, with one console warning). Synchronous exports (the `" sync"` suffix
+markers just stay off, with one console warning), and so are the `…PerKilde`
+exports — a binary without them makes JS fall back to the shared-level
+exports using the *highest* per-pump level for all pumps, which is
+conservative-safe (levels can only come out too high) and is surfaced in the
+grid info line / one console warning. Synchronous exports (the `" sync"` suffix
 in the `foreign export javascript` declarations) are required because both
 `lydnivakart.html` and `gridWorker.js` call them inside tight draw/compute
 loops — an async/Promise-based export would be unworkable there. The linker
@@ -223,7 +235,9 @@ of each contour is readable without map-reading habits.
   message queue so every later round also appears to hang.
   Rows are split contiguously across the pool; each worker returns a
   transferable `Float64Array`. A worker computes its stripe with a single
-  `acoustics_gridStripe` call — or `acoustics_gridStripeSkjermet` when the
+  `acoustics_gridStripePerKilde` call (pumps as stride-4 `[x,y,brg,nivaa]` —
+  each pump's effective level, see «Lokale verdier» below) — or
+  `acoustics_gridStripeSkjermetPerKilde` when the
   message carries husrekke polygons (`husPolysLocal` projects them into the
   grid's local plane per round; the «Husrekker på» master checkbox, its
   «Skjermer» sub-checkbox and loaded rows all gate this). A binary that predates `acoustics_gridStripe` is treated
@@ -232,6 +246,10 @@ of each contour is readable without map-reading habits.
   falls back to the unshielded call and flags the reply `uskjermet: true`
   (shown in the grid info line): computing without shielding only raises
   levels, so the fallback is conservative-safe, unlike a silent wrong answer.
+  A binary that predates the `…PerKilde` exports falls back the same way:
+  the shared-level exports are called with the *highest* per-pump level for
+  all pumps and the reply is flagged `fellesnivaa: true` (also shown in the
+  grid info line) — again conservative-safe.
   There is no JS per-cell fallback loop, on purpose: it would be a second
   copy of the bearing/angle policy that `Lyd.Felt` owns. Masked (in-building)
   cells arrive as NaN; `marchingSquares`/`boundarySegments` skip cells
@@ -267,6 +285,21 @@ of each contour is readable without map-reading habits.
   clutter; turning the grid off is what re-enables halvbue rendering, not a
   separate code path.
 
+### Lokale verdier per utedel (`lydnivakart.html`)
+
+Each pump can override the global «Lydkilde» values (lydnivå/+3 vegg/kab)
+with its own: `p.lokal` is either `null` (= *live* inheritance of the global
+fields — changing the globals moves every non-overridden pump) or
+`{lyd, vegg, kab}`. The «Valgt utedel» panel group appears when a pump is
+selected: unchecked, the fields mirror the globals disabled; checking
+«Lokale verdier» copies the current globals into `p.lokal` as a starting
+point and enables editing; unchecking sets `p.lokal = null` (back to
+inheritance). `effLevel(p)`/`nivaaAv` compute the effective level with the
+same clamping as the global `srcLevel()`, and every consumer — halvbuer
+(`lobePts`), the grid (`pumpsLocal` sends `nivaa` per pump), and
+`oppdaterFasadeVerst` — uses the per-pump level via the `…PerKilde` exports.
+Pumps with local values get a blue number bubble (`.pnum.pl`) on the map.
+
 ### Save/load format (`snapshot()`/`restore()` in `lydnivakart.html`)
 
 Versioned JSON (`format:"lydnivakart"`, currently `version:3`), downloaded/
@@ -276,6 +309,9 @@ migrates older shapes in place (v1 `mode`/`mount`/`bands` fields, v2's now-
 removed `nabos` neighbor-point array is simply ignored if present). Add new
 persisted fields by extending `snapshot()` and reading them defensively in
 `restore()` — don't bump the version number for additive, tolerant changes.
+Per-pump local source values are one such additive field: `pumps[].lokal`
+(`{lyd, vegg, kab}`, omitted when inheriting) — `normaliserLokal` in
+`migrering.js` validates it defensively (garbage → `null` → inherit).
 
 ### Husrekker (`husrekker/polygoner/`, drawn by `lydnivakart.html`)
 

@@ -24,7 +24,7 @@ test('v3: alle felter går gjennom uendret', () => {
   assert.deepEqual(opp.limits, [28, 35]);
   assert.equal(opp.defdir, 90);
   assert.equal(opp.base, 'esri');
-  assert.deepEqual(opp.pumps, [{ num: 2, lat: 59.65, lng: 10.81, brg: 180 }]);
+  assert.deepEqual(opp.pumps, [{ num: 2, lat: 59.65, lng: 10.81, brg: 180, lokal: null }]);
   assert.equal(opp.grid.res, 1.5);
   assert.equal(opp.gridOn, false);   // eksplisitt lagret av
   assert.deepEqual(opp.view, { center: [59.65, 10.81], zoom: 19 });
@@ -82,6 +82,25 @@ test('husOn/husSkjerm/husVerst: additive felter – med i fila går gjennom, man
   assert.equal(uten.husOn, null);       // eldre fil → behold nåværende tilstand
   assert.equal(uten.husSkjerm, null);
   assert.equal(uten.husVerst, null);
+});
+
+test('pumps[].lokal: additivt felt – gyldig går gjennom, mangler/søppel → null', () => {
+  const opp = normaliserOppsett({
+    format: 'lydnivakart', version: 3,
+    settings: { lyd: 52, vegg: false, kab: 0 },
+    pumps: [
+      { num: 1, lat: 59.65, lng: 10.81, brg: 0, lokal: { lyd: 46, vegg: true, kab: 5 } },
+      { num: 2, lat: 59.66, lng: 10.82, brg: 90 },                              // arver (eldre fil)
+      { num: 3, lat: 59.67, lng: 10.83, brg: 180, lokal: { vegg: true } },      // mangler lyd → null
+      { num: 4, lat: 59.68, lng: 10.84, brg: 270, lokal: 'søppel' },            // feil type → null
+      { num: 5, lat: 59.69, lng: 10.85, brg: 0, lokal: { lyd: 48 } },           // vegg/kab defensivt
+    ],
+  });
+  assert.deepEqual(opp.pumps[0].lokal, { lyd: 46, vegg: true, kab: 5 });
+  assert.equal(opp.pumps[1].lokal, null);
+  assert.equal(opp.pumps[2].lokal, null);
+  assert.equal(opp.pumps[3].lokal, null);
+  assert.deepEqual(opp.pumps[4].lokal, { lyd: 48, vegg: false, kab: 0 });
 });
 
 test('grid uten on-felt: gridOn er på (additivt felt, eldre v3-filer)', () => {

@@ -13,6 +13,18 @@
 // (hvilken grense hvert navn betydde da formatet var i bruk), ikke modellen.
 const V1_BANDS = { natBp: 28, nattB: 30, nattC: 35, kvC: 40, dagC: 45 };
 
+// Lokale lydkilde-verdier per utedel (additivt felt på pumps[]): et gyldig
+// objekt med tallverdi for 'lyd' går gjennom (vegg/kab leses defensivt),
+// alt annet – manglende felt, eldre filer, søppel – blir null (= arv de
+// globale verdiene). Verdiene klampes ikke her; det gjør nivaaAv() ved bruk,
+// samme sted som de globale klampes.
+function normaliserLokal(lokal) {
+  if (!lokal || typeof lokal !== 'object') return null;
+  const lyd = parseFloat(lokal.lyd);
+  if (!Number.isFinite(lyd)) return null;
+  return { lyd, vegg: !!lokal.vegg, kab: Number.isFinite(parseFloat(lokal.kab)) ? parseFloat(lokal.kab) : 0 };
+}
+
 // Returnerer et normalisert oppsett, eller null hvis 'd' ikke er et
 // lydnivakart-oppsett. Felter som ikke finnes i fila blir null («behold
 // nåværende verdi») – unntatt gridOn, som alltid har vært på når feltet
@@ -43,7 +55,10 @@ export function normaliserOppsett(d) {
     husVerst: s.husVerst != null ? !!s.husVerst : null,
     // eldre filer kan ha et 'nabos'-felt – det ignoreres stille, siden
     // rutenettet erstattet enkeltpunkt-sjekken
-    pumps: (d.pumps || []).map(p => ({ num: p.num, lat: p.lat, lng: p.lng, brg: p.brg })),
+    pumps: (d.pumps || []).map(p => ({
+      num: p.num, lat: p.lat, lng: p.lng, brg: p.brg,
+      lokal: normaliserLokal(p.lokal),
+    })),
     grid: d.grid || null,
     gridOn: d.grid && d.grid.on != null ? d.grid.on : true,
     view: d.view && d.view.center ? { center: d.view.center, zoom: d.view.zoom } : null,
