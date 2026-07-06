@@ -101,6 +101,21 @@ foreign export javascript "acoustics_gridStripeSkjermet sync"
 foreign export javascript "acoustics_fasadeVerst sync"
   js_fasadeVerst :: Double -> JSVal -> JSVal -> JSVal -> Int -> JSVal -> IO ()
 
+-- PerKilde-variantene: hver pumpe har sitt eget effektive nivå (lokale
+-- verdier per utedel i simulatoren) — pumpene kommer som flat stride-4-array
+-- [x,y,retning,nivå] i stedet for delt nivå + stride-3. Nye eksportnavn av
+-- samme grunn som skjermingsvarianten over: JS feature-detekterer på navnet,
+-- og en eldre binær faller synlig tilbake (høyeste nivå for alle,
+-- konservativt) i stedet for å regne stille feil.
+foreign export javascript "acoustics_gridStripePerKilde sync"
+  js_gridStripePerKilde :: JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
+
+foreign export javascript "acoustics_gridStripeSkjermetPerKilde sync"
+  js_gridStripeSkjermetPerKilde :: JSVal -> JSVal -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
+
+foreign export javascript "acoustics_fasadeVerstPerKilde sync"
+  js_fasadeVerstPerKilde :: JSVal -> JSVal -> JSVal -> Int -> JSVal -> IO ()
+
 foreign import javascript unsafe "$1.length" js_arrLen :: JSVal -> Int
 foreign import javascript unsafe "$1[$2]" js_arrAt :: JSVal -> Int -> Double
 
@@ -170,8 +185,18 @@ js_dbSum arr = dBA (kumulativ [Desibel (js_arrAt arr i) | i <- [0 .. js_arrLen a
 -- stripen skrives til 'ut' i én bulk-kopi ('skrivFloat64').
 js_gridStripe :: Double -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
 js_gridStripe src pumperXYB radStart radSlutt kolonner celleM ut = do
-  plasserte <- lesPlasserte pumperXYB
-  skrivFloat64 ut (rutenettStripe (simKilde src) plasserte stripe)
+  plasserte <- lesPlasserte src pumperXYB
+  skrivFloat64 ut (rutenettStripe plasserte stripe)
+  where
+    stripe = Stripe radStart radSlutt kolonner (Meter celleM)
+
+-- | Som 'js_gridStripe', men med eget nivå per pumpe: 'pumperXYBN' er en
+-- flat stride-4-array [x,y,retning,nivå] der nivået er pumpens effektive
+-- kildenivå ved 1 m (JS har alt lagt på veggtillegg og trukket kabinett).
+js_gridStripePerKilde :: JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
+js_gridStripePerKilde pumperXYBN radStart radSlutt kolonner celleM ut = do
+  plasserte <- lesPlassertePerKilde pumperXYBN
+  skrivFloat64 ut (rutenettStripe plasserte stripe)
   where
     stripe = Stripe radStart radSlutt kolonner (Meter celleM)
 
@@ -183,9 +208,19 @@ js_gridStripe src pumperXYB radStart radSlutt kolonner celleM ut = do
 -- hjørner per polygon (grensene mellom polygonene i den flate arrayen).
 js_gridStripeSkjermet :: Double -> JSVal -> JSVal -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
 js_gridStripeSkjermet src pumperXYB polyXY polyAntall radStart radSlutt kolonner celleM ut = do
-  plasserte <- lesPlasserte pumperXYB
+  plasserte <- lesPlasserte src pumperXYB
   polygoner <- lesPolygoner polyXY polyAntall
-  skrivFloat64 ut (rutenettStripeSkjermet (simKilde src) plasserte polygoner stripe)
+  skrivFloat64 ut (rutenettStripeSkjermet plasserte polygoner stripe)
+  where
+    stripe = Stripe radStart radSlutt kolonner (Meter celleM)
+
+-- | Som 'js_gridStripeSkjermet', med eget nivå per pumpe (stride-4, se
+-- 'js_gridStripePerKilde').
+js_gridStripeSkjermetPerKilde :: JSVal -> JSVal -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
+js_gridStripeSkjermetPerKilde pumperXYBN polyXY polyAntall radStart radSlutt kolonner celleM ut = do
+  plasserte <- lesPlassertePerKilde pumperXYBN
+  polygoner <- lesPolygoner polyXY polyAntall
+  skrivFloat64 ut (rutenettStripeSkjermet plasserte polygoner stripe)
   where
     stripe = Stripe radStart radSlutt kolonner (Meter celleM)
 
@@ -197,10 +232,21 @@ js_gridStripeSkjermet src pumperXYB polyXY polyAntall radStart radSlutt kolonner
 -- når polygonet er degenerert. Ingen pumper gir nivå -Infinity.
 js_fasadeVerst :: Double -> JSVal -> JSVal -> JSVal -> Int -> JSVal -> IO ()
 js_fasadeVerst src pumperXYB polyXY polyAntall medSkjerm ut = do
-  plasserte <- lesPlasserte pumperXYB
+  plasserte <- lesPlasserte src pumperXYB
+  fasadeVerstFelles plasserte polyXY polyAntall medSkjerm ut
+
+-- | Som 'js_fasadeVerst', med eget nivå per pumpe (stride-4, se
+-- 'js_gridStripePerKilde').
+js_fasadeVerstPerKilde :: JSVal -> JSVal -> JSVal -> Int -> JSVal -> IO ()
+js_fasadeVerstPerKilde pumperXYBN polyXY polyAntall medSkjerm ut = do
+  plasserte <- lesPlassertePerKilde pumperXYBN
+  fasadeVerstFelles plasserte polyXY polyAntall medSkjerm ut
+
+fasadeVerstFelles :: [PlassertKilde] -> JSVal -> JSVal -> Int -> JSVal -> IO ()
+fasadeVerstFelles plasserte polyXY polyAntall medSkjerm ut = do
   polygoner <- lesPolygoner polyXY polyAntall
   let skjermMed = if medSkjerm /= 0 then polygoner else []
-      trippel poly = case versteFasadepunkt (simKilde src) plasserte skjermMed poly of
+      trippel poly = case versteFasadepunkt plasserte skjermMed poly of
         Just (Punkt px py, n) -> [px, py, n]
         Nothing -> [0 / 0, 0 / 0, 0 / 0]
   skrivFloat64 ut (VS.fromList (concatMap trippel polygoner))
@@ -219,16 +265,31 @@ lesPolygoner polyXY polyAntall = do
           : gaa (fra + n) rest
   pure (gaa 0 antallHjoerner)
 
--- | Pumpene fra flat stride-3-array [x0,y0,retning0, x1,y1,retning1, …],
--- bulk-kopiert inn ('lesFloat64').
-lesPlasserte :: JSVal -> IO [PlassertKilde]
-lesPlasserte pumperXYB = do
+-- | Pumpene fra flat stride-3-array [x0,y0,retning0, x1,y1,retning1, …] med
+-- delt effektivt nivå 'src' (de gamle eksportene), bulk-kopiert inn
+-- ('lesFloat64').
+lesPlasserte :: Double -> JSVal -> IO [PlassertKilde]
+lesPlasserte src pumperXYB = do
   v <- lesFloat64 pumperXYB
   pure
     [ PlassertKilde
         (Punkt (v VS.! (i * 3)) (v VS.! (i * 3 + 1)))
         (v VS.! (i * 3 + 2))
+        (simKilde src)
     | i <- [0 .. VS.length v `div` 3 - 1]
+    ]
+
+-- | Pumpene fra flat stride-4-array [x0,y0,retning0,nivå0, x1,…] — eget
+-- effektivt nivå per pumpe (PerKilde-eksportene).
+lesPlassertePerKilde :: JSVal -> IO [PlassertKilde]
+lesPlassertePerKilde pumperXYBN = do
+  v <- lesFloat64 pumperXYBN
+  pure
+    [ PlassertKilde
+        (Punkt (v VS.! (i * 4)) (v VS.! (i * 4 + 1)))
+        (v VS.! (i * 4 + 2))
+        (simKilde (v VS.! (i * 4 + 3)))
+    | i <- [0 .. VS.length v `div` 4 - 1]
     ]
 
 -- | Grenseverdi (dBA) fra NS 8175-tabellen, = 'grense'. Indeksene følger

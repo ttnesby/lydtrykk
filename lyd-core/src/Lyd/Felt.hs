@@ -50,9 +50,13 @@ data Punkt = Punkt
 
 -- | En kilde plassert i planet med vifteretning i grader (0° = nord, medurs
 -- — kartets bearing-konvensjon, ikke 'Vinkel' som er relativ til viften).
+-- Hver plasserte kilde bærer sin egen 'Kilde' — utedeler med ulikt effektivt
+-- nivå (lokale verdier per pumpe i kart-simulatoren) er dermed
+-- førsteklasses i feltberegningen, ikke et JS-påfunn oppå den.
 data PlassertKilde = PlassertKilde
   { pkPos :: {-# UNPACK #-} !Punkt,
-    pkRetning :: !Double
+    pkRetning :: !Double,
+    pkKilde :: !Kilde
   }
   deriving (Eq, Show)
 
@@ -61,7 +65,7 @@ data PlassertKilde = PlassertKilde
 -- @abs(((brgTilPunkt - retning + 540) % 360) - 180)@. 'mod'' tåler også
 -- retninger utenfor 0–360 (JS-uttrykkets @+540@ sørget for positiv operand).
 retningsavvik :: PlassertKilde -> Punkt -> Double
-retningsavvik (PlassertKilde (Punkt kx ky) retning) (Punkt x y) =
+retningsavvik (PlassertKilde (Punkt kx ky) retning _) (Punkt x y) =
   abs (((brgTilPunkt - retning + 540) `mod'` 360) - 180)
   where
     brgTilPunkt = (atan2 (x - kx) (y - ky) * 180 / pi + 360) `mod'` 360
@@ -195,17 +199,17 @@ punktSegmentAvstand (Punkt px py) (Punkt ax ay, Punkt bx by) =
 
 -- Lydfelt ---------------------------------------------------------------------
 
--- | Kumulativt lydnivå i et punkt fra alle plasserte kilder. Alle kildene
--- deler samme effektive nivå ('Kilde' beskriver typen utedel, 'PlassertKilde'
--- hvor de står). Avstanden klampes nedad til 1 m — nærmere enn referanse-
+-- | Kumulativt lydnivå i et punkt fra alle plasserte kilder. Hver kilde
+-- regnes med sitt eget effektive nivå ('pkKilde' — utedeler kan ha lokale
+-- verdier). Avstanden klampes nedad til 1 m — nærmere enn referanse-
 -- avstanden gir frittfeltmodellen urimelig høye verdier. Ingen kilder gir
 -- -Infinity (via 'kumulativ').
-nivaaIPunkt :: Kilde -> [PlassertKilde] -> Punkt -> Desibel
-nivaaIPunkt kilde plasserte pt = kumulativ [punktBidrag kilde p pt | p <- plasserte]
+nivaaIPunkt :: [PlassertKilde] -> Punkt -> Desibel
+nivaaIPunkt plasserte pt = kumulativ [punktBidrag p pt | p <- plasserte]
 
 -- | Én kildes bidrag i et punkt (avstanden klampet nedad til 1 m).
-punktBidrag :: Kilde -> PlassertKilde -> Punkt -> Desibel
-punktBidrag kilde p@(PlassertKilde (Punkt kx ky) _) pt@(Punkt x y) =
+punktBidrag :: PlassertKilde -> Punkt -> Desibel
+punktBidrag p@(PlassertKilde (Punkt kx ky) _ kilde) pt@(Punkt x y) =
   let dx = x - kx
       dy = y - ky
       r = max (sqrt (dx * dx + dy * dy)) 1
@@ -221,15 +225,15 @@ punktBidrag kilde p@(PlassertKilde (Punkt kx ky) _) pt@(Punkt x y) =
 -- ('rutenettStripeSkjermet'\/'nivaaMedHindre') gjør, så de to stiene er
 -- celle for celle identiske. Returnerer dBA som Double siden NaN ikke er et
 -- lydnivå.
-nivaaIPunktSkjermet :: Kilde -> [PlassertKilde] -> [Polygon] -> Punkt -> Double
-nivaaIPunktSkjermet kilde plasserte polygoner pt
+nivaaIPunktSkjermet :: [PlassertKilde] -> [Polygon] -> Punkt -> Double
+nivaaIPunktSkjermet plasserte polygoner pt
   | any (`punktIPolygon` pt) gyldige = 0 / 0 -- NaN: maskert celle
   | otherwise = dBA (kumulativ [skjermetBidrag p | p <- plasserte])
   where
     gyldige =
       map (forenkletPolygon forenkleToleranseM) (filter ((>= 3) . length) polygoner)
     skjermetBidrag p =
-      let Desibel l = punktBidrag kilde p pt
+      let Desibel l = punktBidrag p pt
        in Desibel (l - fradrag (pkPos p))
     fradrag pos
       | any (blokkerer pos) gyldige = skjermingDb
@@ -254,16 +258,16 @@ data Stripe = Stripe
 -- kan kopiere hele stripen ut av lineærminnet i én operasjon i stedet for
 -- ett JS-kall per celle. Samme regnestykke som 'rutenettStripeSkjermet'
 -- uten polygoner (pinnes av en test).
-rutenettStripe :: Kilde -> [PlassertKilde] -> Stripe -> VS.Vector Double
-rutenettStripe kilde plasserte = rutenettStripeSkjermet kilde plasserte []
+rutenettStripe :: [PlassertKilde] -> Stripe -> VS.Vector Double
+rutenettStripe plasserte = rutenettStripeSkjermet plasserte []
 
 -- | 'rutenettStripe' med husrekke-polygoner: hver celle regnes som i
 -- 'nivaaIPunktSkjermet' (NaN-maskering + skjermingsfradrag), radmajor.
 -- Polygonforenklingen, bounding-boksene og «eget polygon»-unntaket per kilde
 -- regnes én gang for stripen, ikke per celle — resultatet er identisk med å
 -- kalle 'nivaaIPunktSkjermet' per celle (pinnes av en test).
-rutenettStripeSkjermet :: Kilde -> [PlassertKilde] -> [Polygon] -> Stripe -> VS.Vector Double
-rutenettStripeSkjermet kilde plasserte polygoner stripe =
+rutenettStripeSkjermet :: [PlassertKilde] -> [Polygon] -> Stripe -> VS.Vector Double
+rutenettStripeSkjermet plasserte polygoner stripe =
   VS.generate (max 0 rader * max 0 kolonner) celleVerdi
   where
     rader = stRadSlutt stripe - stRadStart stripe
@@ -274,7 +278,6 @@ rutenettStripeSkjermet kilde plasserte polygoner stripe =
     celleVerdi i =
       let (rad, kol) = i `divMod` kolonner
        in nivaaMedHindre
-            kilde
             kildeHindre
             hindre
             (Punkt (fromIntegral kol * celle) (fromIntegral (stRadStart stripe + rad) * celle))
@@ -341,13 +344,13 @@ segmentKrysserKanterV a b =
 -- fasadepunktene. Kildebidragene akkumuleres i en strikt fold i stedet for å
 -- bygge en liste per celle; samme venstre-til-høyre-rekkefølge som listesummen
 -- i 'kumulativ', så resultatet er bit-identisk.
-nivaaMedHindre :: Kilde -> [(PlassertKilde, [Hinder])] -> [Hinder] -> Punkt -> Double
-nivaaMedHindre kilde kildeHindre hindre pt
+nivaaMedHindre :: [(PlassertKilde, [Hinder])] -> [Hinder] -> Punkt -> Double
+nivaaMedHindre kildeHindre hindre pt
   | any (\h -> iBoks h pt && punktIKanterV (hiKanter h) pt) hindre = 0 / 0
   | otherwise = 10 * logBase 10 (foldl' leggTil 0 kildeHindre)
   where
     leggTil !acc (p, hs) =
-      let Desibel l = punktBidrag kilde p pt
+      let Desibel l = punktBidrag p pt
           blokkert h =
             boksTreffes (pkPos p) pt h
               && segmentKrysserKanterV (pkPos p) pt (hiKanter h)
@@ -418,8 +421,8 @@ fasadepunkter poly
 -- rekke maskeres/hoppes over; send @[]@ for uskjermet nivå). Ingen kilder
 -- gir -Infinity som nivå; 'Nothing' bare når polygonet er degenerert eller
 -- alle punktene er maskert.
-versteFasadepunkt :: Kilde -> [PlassertKilde] -> [Polygon] -> Polygon -> Maybe (Punkt, Double)
-versteFasadepunkt kilde plasserte polygoner poly =
+versteFasadepunkt :: [PlassertKilde] -> [Polygon] -> Polygon -> Maybe (Punkt, Double)
+versteFasadepunkt plasserte polygoner poly =
   case gyldige of
     [] -> Nothing
     xs -> Just (maximumBy (comparing snd) xs)
@@ -431,6 +434,6 @@ versteFasadepunkt kilde plasserte polygoner poly =
     gyldige =
       [ (pt, niv)
       | pt <- fasadepunkter poly,
-        let niv = nivaaMedHindre kilde kildeHindre hindre pt,
+        let niv = nivaaMedHindre kildeHindre hindre pt,
         not (isNaN niv)
       ]

@@ -118,6 +118,10 @@ frittstaaende lp0 =
       kabinettDemping = 0
     }
 
+-- | Plassert 53 dBA-kilde — standardkilden i felt-/skjermingstestene.
+pk53 :: Punkt -> Double -> PlassertKilde
+pk53 pos retning = PlassertKilde pos retning (frittstaaende 53)
+
 -- | Avrunding til to desimaler, slik de gylne verdiene er oppgitt.
 rund2 :: Double -> Double
 rund2 x = fromIntegral (round (x * 100) :: Integer) / 100
@@ -279,57 +283,72 @@ simulatorEgenskaper =
 
 -- | Lydfeltet over rutenettet ('Lyd.Felt') — regnekjernen bak kart-
 -- simulatorens rutenett. Gylne verdier gjenbruker fasiten fra
--- 'lydnivaaKrysssjekk' (53 dBA frittstående, r0 = 1).
+-- 'lydnivaaKrysssjekk' (53 dBA frittstående, r0 = 1). Hver plasserte kilde
+-- bærer sin egen 'Kilde' ('pkKilde'), så blandede nivåer (lokale verdier per
+-- pumpe i simulatoren) pinnes her også.
 feltTests :: TestTree
 feltTests =
   testGroup
     "lydfelt (rutenett, Lyd.Felt)"
     [ testCase "pumpe i origo mot nord: punkt 5 m foran → 39,02" $
-        rund2 (dBA (nivaaIPunkt (frittstaaende 53) [iOrigoMotNord] (Punkt 0 5)))
+        rund2 (dBA (nivaaIPunkt [iOrigoMotNord] (Punkt 0 5)))
           @?= 39.02,
       testCase "pumpe i origo mot nord: punkt 5 m til siden (90°) → 34,02" $
-        rund2 (dBA (nivaaIPunkt (frittstaaende 53) [iOrigoMotNord] (Punkt 5 0)))
+        rund2 (dBA (nivaaIPunkt [iOrigoMotNord] (Punkt 5 0)))
           @?= 34.02,
       testCase "to samlokaliserte pumper = én + 10·log10 2" $
         assertBool "≈ +3,01 dB" $
           abs
-            ( dBA (nivaaIPunkt (frittstaaende 53) [iOrigoMotNord, iOrigoMotNord] (Punkt 0 5))
-                - (dBA (nivaaIPunkt (frittstaaende 53) [iOrigoMotNord] (Punkt 0 5)) + 10 * logBase 10 2)
+            ( dBA (nivaaIPunkt [iOrigoMotNord, iOrigoMotNord] (Punkt 0 5))
+                - (dBA (nivaaIPunkt [iOrigoMotNord] (Punkt 0 5)) + 10 * logBase 10 2)
             )
             < 1e-9,
+      testCase "ulike nivåer per kilde = kumulativ av enkeltbidragene" $
+        let hoy = PlassertKilde (Punkt 0 0) 0 (frittstaaende 60)
+            lav = PlassertKilde (Punkt 3 0) 0 (frittstaaende 45)
+            pt = Punkt 0 5
+         in assertBool "log-sum av 60- og 45-bidraget" $
+              abs
+                ( dBA (nivaaIPunkt [hoy, lav] pt)
+                    - dBA
+                      ( kumulativ
+                          [nivaaIPunkt [hoy] pt, nivaaIPunkt [lav] pt]
+                      )
+                )
+                < 1e-9,
       testCase "ingen pumper → -Infinity" $
-        let n = dBA (nivaaIPunkt (frittstaaende 53) [] (Punkt 0 0))
+        let n = dBA (nivaaIPunkt [] (Punkt 0 0))
          in assertBool "-Infinity" (isInfinite n && n < 0),
       testCase "avstand under 1 m klampes til 1 m" $
-        nivaaIPunkt (frittstaaende 53) [iOrigoMotNord] (Punkt 0 0.5)
-          @?= nivaaIPunkt (frittstaaende 53) [iOrigoMotNord] (Punkt 0 1),
+        nivaaIPunkt [iOrigoMotNord] (Punkt 0 0.5)
+          @?= nivaaIPunkt [iOrigoMotNord] (Punkt 0 1),
       testCase "retningsavvik: retning 350° mot punkt rett nord → 10°" $
         assertBool "≈ 10°" $
-          abs (retningsavvik (PlassertKilde (Punkt 0 0) 350) (Punkt 0 5) - 10) < 1e-9,
+          abs (retningsavvik (PlassertKilde (Punkt 0 0) 350 (frittstaaende 53)) (Punkt 0 5) - 10) < 1e-9,
       testCase "punkt rett bak: avvik 180°, dempes som 90° (vinkelKlampet)" $ do
         assertBool "≈ 180°" $
           abs (retningsavvik iOrigoMotNord (Punkt 0 (-5)) - 180) < 1e-9
         -- toleranse: kumulativ-rundturen (10**/log10) er ikke bit-eksakt
         assertBool "≈ nivå ved 90°" $
           abs
-            ( dBA (nivaaIPunkt (frittstaaende 53) [iOrigoMotNord] (Punkt 0 (-5)))
+            ( dBA (nivaaIPunkt [iOrigoMotNord] (Punkt 0 (-5)))
                 - dBA (lydnivaa (frittstaaende 53) (vinkelKlampet 90) (Meter 5))
             )
             < 1e-9,
       testProperty "rutenettStripe = nivaaIPunkt celle for celle, radmajor" $
-        forAll genFeltOppsett $ \(kilde, plasserte) ->
+        forAll genPlasserte $ \plasserte ->
           forAll genStripe $ \stripe ->
             let Meter celle = stCelleM stripe
                 forventet =
-                  [ dBA (nivaaIPunkt kilde plasserte (Punkt (fromIntegral kol * celle) (fromIntegral rad * celle)))
+                  [ dBA (nivaaIPunkt plasserte (Punkt (fromIntegral kol * celle) (fromIntegral rad * celle)))
                   | rad <- [stRadStart stripe .. stRadSlutt stripe - 1],
                     kol <- [0 .. stKolonner stripe - 1]
                   ]
-             in VS.toList (rutenettStripe kilde plasserte stripe) === forventet,
+             in VS.toList (rutenettStripe plasserte stripe) === forventet,
       testProperty "stripe-lengde = rader · kolonner" $
-        forAll genFeltOppsett $ \(kilde, plasserte) ->
+        forAll genPlasserte $ \plasserte ->
           forAll genStripe $ \stripe ->
-            VS.length (rutenettStripe kilde plasserte stripe)
+            VS.length (rutenettStripe plasserte stripe)
               === (stRadSlutt stripe - stRadStart stripe) * stKolonner stripe,
       testProperty "retningsavvik periodisk i retning (+360°)" $
         forAll genPlassert $ \p ->
@@ -340,29 +359,32 @@ feltTests =
               )
               < 1e-9,
       testProperty "kumulativt punktnivå >= sterkeste enkeltpumpe" $
-        forAll genFeltOppsett $ \(kilde, plasserte) ->
+        forAll genPlasserte $ \plasserte ->
           not (null plasserte) ==>
             forAll genPunkt $ \pt ->
-              dBA (nivaaIPunkt kilde plasserte pt)
-                >= maximum [dBA (nivaaIPunkt kilde [p] pt) | p <- plasserte] - 1e-9
+              dBA (nivaaIPunkt plasserte pt)
+                >= maximum [dBA (nivaaIPunkt [p] pt) | p <- plasserte] - 1e-9
     ]
   where
-    iOrigoMotNord = PlassertKilde (Punkt 0 0) 0
+    iOrigoMotNord = PlassertKilde (Punkt 0 0) 0 (frittstaaende 53)
 
 -- Delte generatorer for lydfeltet ('feltTests'/'skjermTests') -----------------
 
 genPunkt :: Gen Punkt
 genPunkt = Punkt <$> choose (-50, 50) <*> choose (-50, 50)
 
--- | Retninger også utenfor 0–360, som 'retningsavvik' skal tåle.
+-- | Retninger også utenfor 0–360, som 'retningsavvik' skal tåle. Nivået
+-- varierer per kilde ('pkKilde'), så alle egenskapene under dekker også
+-- blandede nivåer (lokale verdier per pumpe).
 genPlassert :: Gen PlassertKilde
-genPlassert = PlassertKilde <$> genPunkt <*> choose (-360, 720)
+genPlassert =
+  PlassertKilde
+    <$> genPunkt
+    <*> choose (-360, 720)
+    <*> (frittstaaende <$> choose (40, 70))
 
-genFeltOppsett :: Gen (Kilde, [PlassertKilde])
-genFeltOppsett = do
-  lp0 <- choose (40, 70)
-  plasserte <- listOf genPlassert
-  pure (frittstaaende lp0, plasserte)
+genPlasserte :: Gen [PlassertKilde]
+genPlasserte = listOf genPlassert
 
 genStripe :: Gen Stripe
 genStripe = do
@@ -423,48 +445,48 @@ skjermTests =
       testCase "brutt siktlinje: én kilde senkes nøyaktig skjermingDb" $
         assertBool "≈ −10 dB" $
           abs
-            ( nivaaIPunktSkjermet (frittstaaende 53) [bakVeggen] [vegg] foranVeggen
-                - (dBA (nivaaIPunkt (frittstaaende 53) [bakVeggen] foranVeggen) - skjermingDb)
+            ( nivaaIPunktSkjermet [bakVeggen] [vegg] foranVeggen
+                - (dBA (nivaaIPunkt [bakVeggen] foranVeggen) - skjermingDb)
             )
             < 1e-9,
       testCase "fri siktlinje (samme side av veggen): uendret nivå" $
-        nivaaIPunktSkjermet (frittstaaende 53) [bakVeggen] [vegg] (Punkt 0 3)
-          @?= dBA (nivaaIPunkt (frittstaaende 53) [bakVeggen] (Punkt 0 3)),
+        nivaaIPunktSkjermet [bakVeggen] [vegg] (Punkt 0 3)
+          @?= dBA (nivaaIPunkt [bakVeggen] (Punkt 0 3)),
       testCase "eget polygon: kilde inne i veggen skjermes ikke av den" $
-        nivaaIPunktSkjermet (frittstaaende 53) [PlassertKilde (Punkt 0 0) 180] [vegg] foranVeggen
-          @?= dBA (nivaaIPunkt (frittstaaende 53) [PlassertKilde (Punkt 0 0) 180] foranVeggen),
+        nivaaIPunktSkjermet [pk53 (Punkt 0 0) 180] [vegg] foranVeggen
+          @?= dBA (nivaaIPunkt [pk53 (Punkt 0 0) 180] foranVeggen),
       testCase "eget polygon: kilde < 1 m fra fasaden er også unntatt" $
-        nivaaIPunktSkjermet (frittstaaende 53) [PlassertKilde (Punkt 0 1.5) 180] [vegg] foranVeggen
-          @?= dBA (nivaaIPunkt (frittstaaende 53) [PlassertKilde (Punkt 0 1.5) 180] foranVeggen),
+        nivaaIPunktSkjermet [pk53 (Punkt 0 1.5) 180] [vegg] foranVeggen
+          @?= dBA (nivaaIPunkt [pk53 (Punkt 0 1.5) 180] foranVeggen),
       testCase "punkt inne i et polygon maskeres (NaN)" $
         assertBool "NaN" $
-          isNaN (nivaaIPunktSkjermet (frittstaaende 53) [bakVeggen] [vegg] (Punkt 0 0)),
+          isNaN (nivaaIPunktSkjermet [bakVeggen] [vegg] (Punkt 0 0)),
       testCase "degenerert polygon (< 3 hjørner) ignoreres" $
-        nivaaIPunktSkjermet (frittstaaende 53) [bakVeggen] [[Punkt 0 0, Punkt 1 0]] foranVeggen
-          @?= dBA (nivaaIPunkt (frittstaaende 53) [bakVeggen] foranVeggen),
+        nivaaIPunktSkjermet [bakVeggen] [[Punkt 0 0, Punkt 1 0]] foranVeggen
+          @?= dBA (nivaaIPunkt [bakVeggen] foranVeggen),
       testProperty "uten polygoner: identisk med rutenettStripe" $
-        forAll genFeltOppsett $ \(kilde, plasserte) ->
+        forAll genPlasserte $ \plasserte ->
           forAll genStripe $ \stripe ->
-            rutenettStripeSkjermet kilde plasserte [] stripe
-              === rutenettStripe kilde plasserte stripe,
+            rutenettStripeSkjermet plasserte [] stripe
+              === rutenettStripe plasserte stripe,
       testProperty "skjermet nivå aldri over uskjermet (utenfor polygonene)" $
-        forAll genFeltOppsett $ \(kilde, plasserte) ->
+        forAll genPlasserte $ \plasserte ->
           forAll genPolygoner $ \polys ->
             forAll genPunkt $ \pt ->
               not (any (`punktIPolygon` pt) polys) ==>
-                nivaaIPunktSkjermet kilde plasserte polys pt
-                  <= dBA (nivaaIPunkt kilde plasserte pt) + 1e-9,
+                nivaaIPunktSkjermet plasserte polys pt
+                  <= dBA (nivaaIPunkt plasserte pt) + 1e-9,
       testProperty "rutenettStripeSkjermet = nivaaIPunktSkjermet celle for celle" $
-        forAll genFeltOppsett $ \(kilde, plasserte) ->
+        forAll genPlasserte $ \plasserte ->
           forAll genPolygoner $ \polys ->
             forAll genStripe $ \stripe ->
               let Meter celle = stCelleM stripe
                   forventet =
-                    [ nivaaIPunktSkjermet kilde plasserte polys (Punkt (fromIntegral kol * celle) (fromIntegral rad * celle))
+                    [ nivaaIPunktSkjermet plasserte polys (Punkt (fromIntegral kol * celle) (fromIntegral rad * celle))
                     | rad <- [stRadStart stripe .. stRadSlutt stripe - 1],
                       kol <- [0 .. stKolonner stripe - 1]
                     ]
-                  fikk = VS.toList (rutenettStripeSkjermet kilde plasserte polys stripe)
+                  fikk = VS.toList (rutenettStripeSkjermet plasserte polys stripe)
                   -- NaN /= NaN, så maskerte celler sammenlignes eksplisitt
                   likNaN a b = (isNaN a && isNaN b) || a == b
                in counterexample (show (fikk, forventet)) $
@@ -477,7 +499,7 @@ skjermTests =
     lForm = [Punkt 0 0, Punkt 4 0, Punkt 4 2, Punkt 2 2, Punkt 2 4, Punkt 0 4]
     -- «veggen»: lav, bred rekke tvers over origo; kilden bak, punktet foran
     vegg = [Punkt (-5) (-1), Punkt 5 (-1), Punkt 5 1, Punkt (-5) 1]
-    bakVeggen = PlassertKilde (Punkt 0 10) 180
+    bakVeggen = pk53 (Punkt 0 10) 180
     foranVeggen = Punkt 0 (-10)
 
 -- | Polygonforenklingen ('forenkletPolygon') som felt-funksjonene bruker før
@@ -510,12 +532,12 @@ forenklingTests =
       -- den semantiske begrunnelsen for forenklingen: tettere digitalisering
       -- av samme geometri skal ikke endre det skjermede feltet
       testProperty "oppdelte kanter endrer ikke det skjermede feltet" $
-        forAll genFeltOppsett $ \(kilde, plasserte) ->
+        forAll genPlasserte $ \plasserte ->
           forAll genRektangel $ \rekt ->
             forAll (choose (2, 8 :: Int)) $ \deler ->
               forAll genPunkt $ \pt ->
-                let a = nivaaIPunktSkjermet kilde plasserte [rekt] pt
-                    b = nivaaIPunktSkjermet kilde plasserte [oppdelt deler rekt] pt
+                let a = nivaaIPunktSkjermet plasserte [rekt] pt
+                    b = nivaaIPunktSkjermet plasserte [oppdelt deler rekt] pt
                  in counterexample (show (a, b)) ((isNaN a && isNaN b) || a == b)
     ]
   where
@@ -540,51 +562,51 @@ fasadeTests =
         assertBool "≥ 16 punkter" (length (fasadepunkter kvadrat) >= 16),
       testCase "degenerert polygon (< 3 hjørner) gir ingen punkter" $ do
         fasadepunkter [Punkt 0 0, Punkt 1 0] @?= []
-        versteFasadepunkt (frittstaaende 53) [bakVeggen] [] [Punkt 0 0, Punkt 1 0] @?= Nothing,
+        versteFasadepunkt [bakVeggen] [] [Punkt 0 0, Punkt 1 0] @?= Nothing,
       testCase "verste punkt vender mot kilden (nordsida av veggen)" $
-        case versteFasadepunkt (frittstaaende 53) [bakVeggen] [vegg] vegg of
+        case versteFasadepunkt [bakVeggen] [vegg] vegg of
           Nothing -> assertFailure "fant ikke noe fasadepunkt"
           Just (pt, niv) -> do
             assertBool "på nordsida (mot kilden)" (pY pt > 1)
             -- fri siktlinje på kildesida: nivået er det uskjermede
             assertBool "= uskjermet nivå i punktet" $
-              abs (niv - dBA (nivaaIPunkt (frittstaaende 53) [bakVeggen] pt)) < 1e-9,
+              abs (niv - dBA (nivaaIPunkt [bakVeggen] pt)) < 1e-9,
       testCase "ingen kilder: verste punkt finnes, nivået er -Infinity" $
-        case versteFasadepunkt (frittstaaende 53) [] [vegg] vegg of
+        case versteFasadepunkt [] [vegg] vegg of
           Nothing -> assertFailure "fant ikke noe fasadepunkt"
           Just (_, niv) -> assertBool "-Infinity" (isInfinite niv && niv < 0),
       testProperty "skjermet verste punkt aldri over uskjermet" $
-        forAll genFeltOppsett $ \(kilde, plasserte) ->
+        forAll genPlasserte $ \plasserte ->
           forAll genRektangel $ \rekt ->
-            let skjermet = versteFasadepunkt kilde plasserte [rekt] rekt
-                uskjermet = versteFasadepunkt kilde plasserte [] rekt
+            let skjermet = versteFasadepunkt plasserte [rekt] rekt
+                uskjermet = versteFasadepunkt plasserte [] rekt
              in case (skjermet, uskjermet) of
                   (Just (_, s), Just (_, u)) -> property (s <= u + 1e-9)
                   _ -> counterexample "manglet fasadepunkt" (property False),
       -- pinner den optimaliserte hindre-stien (nivaaMedHindre) mot
       -- spesifikasjons-implementasjonen nivaaIPunktSkjermet
       testProperty "versteFasadepunkt = maksimum av nivaaIPunktSkjermet over fasadepunktene" $
-        forAll genFeltOppsett $ \(kilde, plasserte) ->
+        forAll genPlasserte $ \plasserte ->
           forAll genPolygoner $ \polys ->
             forAll genRektangel $ \rekt ->
               let fasit =
                     [ n
                     | pt <- fasadepunkter rekt,
-                      let n = nivaaIPunktSkjermet kilde plasserte polys pt,
+                      let n = nivaaIPunktSkjermet plasserte polys pt,
                       not (isNaN n)
                     ]
-               in case versteFasadepunkt kilde plasserte polys rekt of
+               in case versteFasadepunkt plasserte polys rekt of
                     Nothing -> property (null fasit)
                     Just (pt, n) ->
                       counterexample (show (pt, n)) $
                         not (null fasit)
                           && n == maximum fasit
-                          && n == nivaaIPunktSkjermet kilde plasserte polys pt
+                          && n == nivaaIPunktSkjermet plasserte polys pt
     ]
   where
     kvadrat = [Punkt (-2) (-2), Punkt 2 (-2), Punkt 2 2, Punkt (-2) 2]
     vegg = [Punkt (-5) (-1), Punkt 5 (-1), Punkt 5 1, Punkt (-5) 1]
-    bakVeggen = PlassertKilde (Punkt 0 10) 180
+    bakVeggen = pk53 (Punkt 0 10) 180
     -- minste avstand fra p til polygonets kanter (testens egen fasit-geometri)
     kantAvstand poly p =
       minimum [segAvstand p a b | (a, b) <- zip poly (drop 1 poly ++ take 1 poly)]
