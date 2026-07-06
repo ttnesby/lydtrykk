@@ -642,17 +642,93 @@ function husPolysLocal(origin){
   return { xy:new Float64Array(xy), antall:new Float64Array(antall) };
 }
 let gridReqSeq=0;
+
+// Fremdrift for runden som pågår: en stripe-teller i gridinfo-linja, og – på
+// fulloppløste runder (ikke under drag) – striper malt inn i fyll-canvaset
+// etter hvert som workerne svarer, en synlig «bølge» sør→nord over
+// rutenettet. Konturene trenger hele rutenettet (marching squares) og tegnes
+// fortsatt først når runden er ferdig; det progressive fyllet gjenbruker
+// fyllLayer, så renderFyll ved fullført runde erstatter det sømløst.
+let framdrift=null;
+function startFramdrift(reqId,rows,cols,res,sw,striper){
+  const el=document.getElementById('gridinfo');
+  framdrift={reqId,rows,cols,res,sw,striper,ferdig:0,canvas:null,layerLaget:false,
+             baseTekst:el?el.textContent:''};
+  if(interacting) return;                 // grovpass under drag: bare telleren
+  const aktive=[...activeLimits].sort((x,y)=>x-y);
+  if(!aktive.length) return;
+  framdrift.aktive=aktive;
+  framdrift.rgb=aktive.map(l=>{ const n=parseInt(heat(l).slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; });
+  framdrift.canvas=document.createElement('canvas');
+  framdrift.canvas.width=cols; framdrift.canvas.height=rows;
+  framdrift.ctx=framdrift.canvas.getContext('2d');
+  framdrift.img=framdrift.ctx.createImageData(cols,rows);
+}
+function visFramdrift(){
+  const el=document.getElementById('gridinfo'); if(!el||!framdrift||framdrift.feilet) return;
+  el.textContent=`${framdrift.baseTekst} · beregner ${framdrift.ferdig}/${framdrift.striper} striper`;
+}
+function stripeFerdig(part){
+  if(!framdrift||part.reqId!==framdrift.reqId) return;
+  framdrift.ferdig++;
+  visFramdrift();
+  if(!framdrift.canvas) return;
+  // mal stripens celler (samme fargelogikk som renderFyll)
+  const {rows,cols,aktive,rgb,img}=framdrift;
+  const stripeRader=part.values.length/cols;
+  for(let r=0;r<stripeRader;r++){
+    const rad=part.rowStart+r, outRow=rows-1-rad;   // rad 0 = sør, bildets rad 0 = nord
+    for(let col=0;col<cols;col++){
+      const v=part.values[r*cols+col];
+      let i=-1;
+      while(i+1<aktive.length && v>aktive[i+1]) i++;
+      if(i<0) continue;
+      const pi=(outRow*cols+col)*4;
+      img.data[pi]=rgb[i][0]; img.data[pi+1]=rgb[i][1]; img.data[pi+2]=rgb[i][2]; img.data[pi+3]=FYLL_ALPHA;
+    }
+  }
+  framdrift.ctx.putImageData(img,0,0);
+  const url=framdrift.canvas.toDataURL();
+  if(!framdrift.layerLaget){
+    // første stripe i runden: bytt ut forrige rundes fyll (hjørnene kan ha
+    // flyttet seg, så et nytt overlay med riktige bounds – ikke setUrl alene)
+    if(fyllLayer){ map.removeLayer(fyllLayer); }
+    const ne=fromLocal((cols-1)*framdrift.res,(rows-1)*framdrift.res,framdrift.sw);
+    fyllLayer=L.imageOverlay(url,[[framdrift.sw.lat,framdrift.sw.lng],[ne.lat,ne.lng]],{interactive:false}).addTo(map);
+    framdrift.layerLaget=true;
+  } else {
+    fyllLayer.setUrl(url);
+  }
+}
+// Rydd fremdriften for runden 'reqId' når den er over. Ved avbrutt runde
+// (timeout/feil) settes infolinja tilbake fra telleren til grunnteksten –
+// men en eksplisitt feilmelding (skrevet av onMsg) får stå.
+function sluttFramdrift(reqId,avbrutt){
+  if(!framdrift||framdrift.reqId!==reqId) return;
+  if(avbrutt){
+    const el=document.getElementById('gridinfo');
+    if(el&&el.textContent.includes(' · beregner ')) el.textContent=framdrift.baseTekst;
+    // det progressive fyllet kan ha rukket å erstatte forrige rundes – tegn
+    // det siste fullførte rutenettet tilbake, så et avbrudd ikke etterlater
+    // et halvmalt felt
+    if(framdrift.layerLaget&&lastGrid) renderFyll(lastGrid);
+  }
+  framdrift=null;
+}
+
 function computeGrid(rows,cols,res,origin){
   if(!gridWorkers.length) return Promise.resolve(null);
   const reqId=++gridReqSeq;
   const src=srcLevel(), pl=pumpsLocal(origin), polys=husPolysLocal(origin);
   const perWorker=Math.ceil(rows/gridWorkers.length);
+  startFramdrift(reqId,rows,cols,res,origin,Math.min(gridWorkers.length,Math.ceil(rows/perWorker)));
   const jobs=gridWorkers.map((w,i)=>{
     const rowStart=i*perWorker, rowEnd=Math.min(rows,rowStart+perWorker);
     if(rowStart>=rowEnd) return Promise.resolve(undefined);
-    // Frist skalert med stripestørrelsen: skjermet beregning med tett
-    // digitaliserte polygoner er målt til ~1 ms/celle – 3 ms/celle gir
-    // margin, pluss grunnfrist til wasm-oppstart i ferske workere.
+    // Frist skalert med stripestørrelsen: 3 ms/celle er svært romslig –
+    // skjermet beregning kostet ~1 ms/celle før kjernen fikk vektorisert
+    // varm sti + polygonforenkling + bulk-FFI, nå langt under. Pluss
+    // grunnfrist til wasm-oppstart i ferske workere.
     const fristMs=15000+(rowEnd-rowStart)*cols*3;
     return new Promise(resolve=>{
       let timeoutId=null;
@@ -663,7 +739,11 @@ function computeGrid(rows,cols,res,origin){
         if(timeoutId!=null) clearTimeout(timeoutId);
       };
       const onMsg=e=>{ if(e.data.reqId!==reqId) return; cleanup();
-        if(e.data.error){ document.getElementById('gridinfo').textContent='Rutenett utilgjengelig – beregningskjernen kunne ikke lastes i bakgrunnsarbeiderne.'; resolve(null); return; }
+        if(e.data.error){
+          // feilmeldingen skal bli stående – stopp stripe-telleren for runden
+          if(framdrift&&framdrift.reqId===reqId) framdrift.feilet=true;
+          document.getElementById('gridinfo').textContent='Rutenett utilgjengelig – beregningskjernen kunne ikke lastes i bakgrunnsarbeiderne.'; resolve(null); return; }
+        stripeFerdig(e.data);
         resolve(e.data); };
       const onErr=e=>{ cleanup(); console.warn('Grid-worker feilet – hopper over denne runden:',e.message||e); resolve(null); };
       timeoutId=setTimeout(()=>{ cleanup(); console.warn('Grid-worker brukte for lang tid – bygger poolen på nytt og hopper over denne runden.'); gjenoppbyggPool(reqId); resolve(null); },fristMs);
@@ -674,8 +754,10 @@ function computeGrid(rows,cols,res,origin){
     });
   });
   return Promise.all(jobs).then(parts=>{
+    const avbrutt=parts.some(part=>part===null);
+    sluttFramdrift(reqId,avbrutt);
     if(reqId!==gridReqSeq) return null;   // en nyere forespørsel har overtatt i mellomtiden
-    if(parts.some(part=>part===null)) return null;
+    if(avbrutt) return null;
     const grid=new Float64Array(rows*cols);
     parts.forEach(part=>{ if(part) grid.set(part.values, part.rowStart*cols); });
     // 'uskjermet': en worker med eldre binær (uten skjerming-eksporten) har
@@ -709,6 +791,7 @@ async function recomputeGrid(){
   updateGridInfo(cols,rows,res,coarsened);
   const utfall=await computeGrid(rows,cols,res,sw);
   if(!utfall) return;
+  updateGridInfo(cols,rows,res,coarsened);   // tilbake fra stripe-telleren
   lastGrid={grid:utfall.grid,rows,cols,res,sw};
   renderFyll(lastGrid);
   renderContours(lastGrid);

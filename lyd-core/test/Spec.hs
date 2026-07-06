@@ -1,5 +1,6 @@
 module Main (main) where
 
+import qualified Data.Vector.Storable as VS
 import Lyd.Beregning
 import Lyd.Felt
 import Test.Tasty
@@ -13,7 +14,7 @@ tests :: TestTree
 tests =
   testGroup
     "lyd-core"
-    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper, feltTests, skjermTests, fasadeTests]
+    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper, feltTests, skjermTests, forenklingTests, fasadeTests]
 
 grenseTests :: TestTree
 grenseTests =
@@ -324,11 +325,11 @@ feltTests =
                   | rad <- [stRadStart stripe .. stRadSlutt stripe - 1],
                     kol <- [0 .. stKolonner stripe - 1]
                   ]
-             in rutenettStripe kilde plasserte stripe === forventet,
+             in VS.toList (rutenettStripe kilde plasserte stripe) === forventet,
       testProperty "stripe-lengde = rader · kolonner" $
         forAll genFeltOppsett $ \(kilde, plasserte) ->
           forAll genStripe $ \stripe ->
-            length (rutenettStripe kilde plasserte stripe)
+            VS.length (rutenettStripe kilde plasserte stripe)
               === (stRadSlutt stripe - stRadStart stripe) * stKolonner stripe,
       testProperty "retningsavvik periodisk i retning (+360°)" $
         forAll genPlassert $ \p ->
@@ -385,6 +386,18 @@ genPolygoner :: Gen [Polygon]
 genPolygoner = do
   n <- choose (0, 3 :: Int)
   vectorOf n genRektangel
+
+-- | Del hver kant i 'deler' like biter (nye, eksakt kollineære hjørner) —
+-- etterligner de tett digitaliserte reelle husrekkene.
+oppdelt :: Int -> Polygon -> Polygon
+oppdelt deler poly =
+  concat
+    [ [ Punkt (pX a + t * (pX b - pX a)) (pY a + t * (pY b - pY a))
+      | i <- [0 .. deler - 1],
+        let t = fromIntegral i / fromIntegral deler
+      ]
+    | (a, b) <- zip poly (drop 1 poly ++ take 1 poly)
+    ]
 
 -- | Husrekke-skjermingen ('Lyd.Felt'): geometri-primitivene og den skjermede
 -- feltberegningen. Modellen: NaN-maskering inne i polygonene, fast
@@ -451,7 +464,7 @@ skjermTests =
                     | rad <- [stRadStart stripe .. stRadSlutt stripe - 1],
                       kol <- [0 .. stKolonner stripe - 1]
                     ]
-                  fikk = rutenettStripeSkjermet kilde plasserte polys stripe
+                  fikk = VS.toList (rutenettStripeSkjermet kilde plasserte polys stripe)
                   -- NaN /= NaN, så maskerte celler sammenlignes eksplisitt
                   likNaN a b = (isNaN a && isNaN b) || a == b
                in counterexample (show (fikk, forventet)) $
@@ -466,6 +479,48 @@ skjermTests =
     vegg = [Punkt (-5) (-1), Punkt 5 (-1), Punkt 5 1, Punkt (-5) 1]
     bakVeggen = PlassertKilde (Punkt 0 10) 180
     foranVeggen = Punkt 0 (-10)
+
+-- | Polygonforenklingen ('forenkletPolygon') som felt-funksjonene bruker før
+-- maskering og sikttest — både spesifikasjonsstien ('nivaaIPunktSkjermet')
+-- og den varme stien ('rutenettStripeSkjermet') forenkler likt, så
+-- forenklingen må bevare geometrien innenfor toleransen og aldri endre et
+-- allerede enkelt polygon.
+forenklingTests :: TestTree
+forenklingTests =
+  testGroup
+    "polygonforenkling (Douglas–Peucker, Lyd.Felt)"
+    [ testCase "rektangel er uendret" $
+        forenkletPolygon forenkleToleranseM kvadrat @?= kvadrat,
+      testCase "trekant (ingenting å fjerne) er uendret" $
+        forenkletPolygon forenkleToleranseM trekant @?= trekant,
+      testCase "kollineære mellompunkter fjernes" $
+        forenkletPolygon
+          forenkleToleranseM
+          [Punkt 0 0, Punkt 5 0, Punkt 10 0, Punkt 10 10, Punkt 0 10]
+          @?= [Punkt 0 0, Punkt 10 0, Punkt 10 10, Punkt 0 10],
+      testCase "avvik under toleransen fjernes, over beholdes" $ do
+        forenkletPolygon 0.2 [Punkt 0 0, Punkt 5 0.1, Punkt 10 0, Punkt 10 10, Punkt 0 10]
+          @?= [Punkt 0 0, Punkt 10 0, Punkt 10 10, Punkt 0 10]
+        forenkletPolygon 0.2 [Punkt 0 0, Punkt 5 1, Punkt 10 0, Punkt 10 10, Punkt 0 10]
+          @?= [Punkt 0 0, Punkt 5 1, Punkt 10 0, Punkt 10 10, Punkt 0 10],
+      testProperty "tett oppdelt rektangel forenkles tilbake til hjørnene" $
+        forAll genRektangel $ \rekt ->
+          forAll (choose (2, 8 :: Int)) $ \deler ->
+            forenkletPolygon forenkleToleranseM (oppdelt deler rekt) === rekt,
+      -- den semantiske begrunnelsen for forenklingen: tettere digitalisering
+      -- av samme geometri skal ikke endre det skjermede feltet
+      testProperty "oppdelte kanter endrer ikke det skjermede feltet" $
+        forAll genFeltOppsett $ \(kilde, plasserte) ->
+          forAll genRektangel $ \rekt ->
+            forAll (choose (2, 8 :: Int)) $ \deler ->
+              forAll genPunkt $ \pt ->
+                let a = nivaaIPunktSkjermet kilde plasserte [rekt] pt
+                    b = nivaaIPunktSkjermet kilde plasserte [oppdelt deler rekt] pt
+                 in counterexample (show (a, b)) ((isNaN a && isNaN b) || a == b)
+    ]
+  where
+    kvadrat = [Punkt (-2) (-2), Punkt 2 (-2), Punkt 2 2, Punkt (-2) 2]
+    trekant = [Punkt 0 0, Punkt 4 0, Punkt 2 3]
 
 -- | Fasadepunktene ('Lyd.Felt'): prøvepunkter langs husrekke-omkretsen og
 -- «verste punkt per rekke» — operasjonaliseringen av verste punkt ved

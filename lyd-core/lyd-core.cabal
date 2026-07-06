@@ -14,10 +14,26 @@ common warnings
 
 library
     import:           warnings
+    -- -O2: rutenett-løkken i Lyd.Felt er den varme stien i kart-simulatoren
+    -- (kjøres per celle × kilde × polygonkant i wasm) — full optimalisering
+    -- er poenget, ikke støy, og bygget er lite.
+    ghc-options:      -O2
     exposed-modules:  Lyd.Beregning
                       Lyd.Felt
     hs-source-dirs:   src
-    build-depends:    base >=4.15 && <5
+    build-depends:    base >=4.15 && <5,
+                      vector >=0.12 && <1
+    default-language: Haskell2010
+
+-- Mikro-benchmark for den varme rutenett-stien (kjøres manuelt med
+-- `cabal bench`, ikke av CI). Bevisst uten benchmark-rammeverk.
+benchmark lyd-core-bench
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Bench.hs
+    hs-source-dirs:   bench
+    ghc-options:      -O2
+    build-depends:    base, lyd-core, vector
     default-language: Haskell2010
 
 test-suite lyd-core-test
@@ -30,5 +46,6 @@ test-suite lyd-core-test
         lyd-core,
         tasty >=1.4,
         tasty-hunit >=0.10,
-        tasty-quickcheck >=0.10
+        tasty-quickcheck >=0.10,
+        vector
     default-language: Haskell2010

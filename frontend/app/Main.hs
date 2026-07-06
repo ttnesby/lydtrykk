@@ -6,6 +6,9 @@ module Main (main) where
 
 import Lyd.Beregning
 #ifdef WASM
+import qualified Data.Vector.Storable as VS
+import Foreign.ForeignPtr (mallocForeignPtrArray, withForeignPtr)
+import Foreign.Ptr (Ptr)
 import Lyd.Felt
 #endif
 import Miso
@@ -100,7 +103,35 @@ foreign export javascript "acoustics_fasadeVerst sync"
 
 foreign import javascript unsafe "$1.length" js_arrLen :: JSVal -> Int
 foreign import javascript unsafe "$1[$2]" js_arrAt :: JSVal -> Int -> Double
-foreign import javascript unsafe "$1[$2] = $3" js_arrSett :: JSVal -> Int -> Double -> IO ()
+
+-- Bulk-kopiering mellom JS-arrays og wasm-lineærminnet: rutenettet er
+-- hundretusenvis av celler, og med ett FFI-kall per element dominerte selve
+-- wasm↔JS-krysningene kjøretiden. '__exports' er wasm-instansens exports
+-- (inkl. 'memory') og er i scope i JSFFI-snuttene via closuren som
+-- post-link.mjs genererer i ghc_wasm_jsffi.js. Viewet bygges per kall —
+-- 'memory.buffer' byttes ut når minnet vokser, så det kan ikke caches.
+foreign import javascript unsafe "new Float64Array(__exports.memory.buffer, $2, $3).set($1)"
+  js_kopierInn :: JSVal -> Ptr Double -> Int -> IO ()
+
+foreign import javascript unsafe "$1.set(new Float64Array(__exports.memory.buffer, $2, $3))"
+  js_kopierUt :: JSVal -> Ptr Double -> Int -> IO ()
+
+-- | Kopier en JS Float64Array inn som Storable-vektor — én FFI-krysning i
+-- stedet for ett 'js_arrAt'-kall per element (husrekkene alene er flere
+-- tusen tall per stripe).
+lesFloat64 :: JSVal -> IO (VS.Vector Double)
+lesFloat64 arr = do
+  let n = js_arrLen arr
+  fp <- mallocForeignPtrArray n
+  withForeignPtr fp $ \p -> js_kopierInn arr p n
+  pure (VS.unsafeFromForeignPtr0 fp n)
+
+-- | Skriv en Storable-vektor til en JS Float64Array — én FFI-krysning i
+-- stedet for ett @$1[$2] = $3@-kall per celle. Vektoren fra
+-- 'rutenettStripe'\/'rutenettStripeSkjermet' ligger i pinnet minne, så
+-- adressen er stabil gjennom det unsafe importkallet.
+skrivFloat64 :: JSVal -> VS.Vector Double -> IO ()
+skrivFloat64 ut v = VS.unsafeWith v $ \p -> js_kopierUt ut p (VS.length v)
 
 -- | Frittstående kilde med 1 m referanse; 'src' inkluderer alt nivå (også
 -- ev. veggtillegg), så monteringen settes til 'Frittstaaende' her.
@@ -135,12 +166,13 @@ js_dbSum arr = dBA (kumulativ [Desibel (js_arrAt arr i) | i <- [0 .. js_arrLen a
 -- med kumulativt lydnivå per rutenettcelle, radmajor. = 'rutenettStripe'.
 -- 'pumperXYB' er en flat stride-3-array [x0,y0,retning0, x1,y1,retning1, …]
 -- i lokale plan-koordinater (meter fra rutenettets SV-hjørne, retning i
--- grader 0° = nord, medurs) — samme konvensjon som gridWorker.js.
+-- grader 0° = nord, medurs) — samme konvensjon som gridWorker.js. Hele
+-- stripen skrives til 'ut' i én bulk-kopi ('skrivFloat64').
 js_gridStripe :: Double -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
-js_gridStripe src pumperXYB radStart radSlutt kolonner celleM ut =
-  sequence_ (zipWith (js_arrSett ut) [0 ..] verdier)
+js_gridStripe src pumperXYB radStart radSlutt kolonner celleM ut = do
+  plasserte <- lesPlasserte pumperXYB
+  skrivFloat64 ut (rutenettStripe (simKilde src) plasserte stripe)
   where
-    verdier = rutenettStripe (simKilde src) (lesPlasserte pumperXYB) stripe
     stripe = Stripe radStart radSlutt kolonner (Meter celleM)
 
 -- | Som 'js_gridStripe', men med husrekke-polygoner og skjerming
@@ -150,10 +182,11 @@ js_gridStripe src pumperXYB radStart radSlutt kolonner celleM ut =
 -- [x0,y0,x1,y1,…] i samme lokale plan som pumpene, 'polyAntall' antall
 -- hjørner per polygon (grensene mellom polygonene i den flate arrayen).
 js_gridStripeSkjermet :: Double -> JSVal -> JSVal -> JSVal -> Int -> Int -> Int -> Double -> JSVal -> IO ()
-js_gridStripeSkjermet src pumperXYB polyXY polyAntall radStart radSlutt kolonner celleM ut =
-  sequence_ (zipWith (js_arrSett ut) [0 ..] verdier)
+js_gridStripeSkjermet src pumperXYB polyXY polyAntall radStart radSlutt kolonner celleM ut = do
+  plasserte <- lesPlasserte pumperXYB
+  polygoner <- lesPolygoner polyXY polyAntall
+  skrivFloat64 ut (rutenettStripeSkjermet (simKilde src) plasserte polygoner stripe)
   where
-    verdier = rutenettStripeSkjermet (simKilde src) (lesPlasserte pumperXYB) (lesPolygoner polyXY polyAntall) stripe
     stripe = Stripe radStart radSlutt kolonner (Meter celleM)
 
 -- | Verste fasadepunkt per polygon (= 'versteFasadepunkt'): skriver
@@ -163,37 +196,40 @@ js_gridStripeSkjermet src pumperXYB polyXY polyAntall radStart radSlutt kolonner
 -- valg som rutenettet, styrt av samme avkrysning). NaN i alle tre feltene
 -- når polygonet er degenerert. Ingen pumper gir nivå -Infinity.
 js_fasadeVerst :: Double -> JSVal -> JSVal -> JSVal -> Int -> JSVal -> IO ()
-js_fasadeVerst src pumperXYB polyXY polyAntall medSkjerm ut =
-  sequence_ (concat (zipWith skriv [0 ..] polygoner))
-  where
-    polygoner = lesPolygoner polyXY polyAntall
-    skjermMed = if medSkjerm /= 0 then polygoner else []
-    plasserte = lesPlasserte pumperXYB
-    skriv i poly =
-      let (x, y, niv) = case versteFasadepunkt (simKilde src) plasserte skjermMed poly of
-            Just (Punkt px py, n) -> (px, py, n)
-            Nothing -> (0 / 0, 0 / 0, 0 / 0)
-       in [js_arrSett ut (3 * i) x, js_arrSett ut (3 * i + 1) y, js_arrSett ut (3 * i + 2) niv]
+js_fasadeVerst src pumperXYB polyXY polyAntall medSkjerm ut = do
+  plasserte <- lesPlasserte pumperXYB
+  polygoner <- lesPolygoner polyXY polyAntall
+  let skjermMed = if medSkjerm /= 0 then polygoner else []
+      trippel poly = case versteFasadepunkt (simKilde src) plasserte skjermMed poly of
+        Just (Punkt px py, n) -> [px, py, n]
+        Nothing -> [0 / 0, 0 / 0, 0 / 0]
+  skrivFloat64 ut (VS.fromList (concatMap trippel polygoner))
 
 -- | Polygonene fra flat hjørne-array [x0,y0,x1,y1,…] + antall hjørner per
--- polygon (grensene mellom polygonene i den flate arrayen).
-lesPolygoner :: JSVal -> JSVal -> [Polygon]
-lesPolygoner polyXY polyAntall = gaa 0 antallHjoerner
-  where
-    antallHjoerner = [truncate (js_arrAt polyAntall i) :: Int | i <- [0 .. js_arrLen polyAntall - 1]]
-    gaa _ [] = []
-    gaa fra (n : rest) =
-      [Punkt (js_arrAt polyXY (2 * (fra + i))) (js_arrAt polyXY (2 * (fra + i) + 1)) | i <- [0 .. n - 1]]
-        : gaa (fra + n) rest
+-- polygon (grensene mellom polygonene i den flate arrayen). Begge arrayene
+-- bulk-kopieres inn ('lesFloat64') før de pakkes ut.
+lesPolygoner :: JSVal -> JSVal -> IO [Polygon]
+lesPolygoner polyXY polyAntall = do
+  xy <- lesFloat64 polyXY
+  antall <- lesFloat64 polyAntall
+  let antallHjoerner = [truncate (antall VS.! i) :: Int | i <- [0 .. VS.length antall - 1]]
+      gaa _ [] = []
+      gaa fra (n : rest) =
+        [Punkt (xy VS.! (2 * (fra + i))) (xy VS.! (2 * (fra + i) + 1)) | i <- [0 .. n - 1]]
+          : gaa (fra + n) rest
+  pure (gaa 0 antallHjoerner)
 
--- | Pumpene fra flat stride-3-array [x0,y0,retning0, x1,y1,retning1, …].
-lesPlasserte :: JSVal -> [PlassertKilde]
-lesPlasserte pumperXYB =
-  [ PlassertKilde
-      (Punkt (js_arrAt pumperXYB (i * 3)) (js_arrAt pumperXYB (i * 3 + 1)))
-      (js_arrAt pumperXYB (i * 3 + 2))
-  | i <- [0 .. js_arrLen pumperXYB `div` 3 - 1]
-  ]
+-- | Pumpene fra flat stride-3-array [x0,y0,retning0, x1,y1,retning1, …],
+-- bulk-kopiert inn ('lesFloat64').
+lesPlasserte :: JSVal -> IO [PlassertKilde]
+lesPlasserte pumperXYB = do
+  v <- lesFloat64 pumperXYB
+  pure
+    [ PlassertKilde
+        (Punkt (v VS.! (i * 3)) (v VS.! (i * 3 + 1)))
+        (v VS.! (i * 3 + 2))
+    | i <- [0 .. VS.length v `div` 3 - 1]
+    ]
 
 -- | Grenseverdi (dBA) fra NS 8175-tabellen, = 'grense'. Indeksene følger
 -- enum-rekkefølgen: klasse 0–3 = A, B+, B, C; tidsrom 0–2 = Dag, Kveld, Natt
