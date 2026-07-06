@@ -170,13 +170,6 @@ Husrekke-skjerming i simulatoren: `li′ = li − 10` for bidrag der siktlinja
 kilde→punkt krysser et bygningspolygon (binært og konservativt; kildens eget
 hus er unntatt), og punkter inne i polygonene regnes ikke.
 
-> Forenklet modell — faktiske forhold med refleksjoner og skjerming kan
-> avvike. Se [PLAN.md](PLAN.md) for full spesifikasjon.
-
-> Retningskorreksjonen bruker en glatt cosinus-karakteristikk (0 dB rett frem,
-> 5 dBA ved 90°). Fasit-tallene den er verifisert mot er dokumentert i
-> [COSINUS-OVERGANG.md](COSINUS-OVERGANG.md).
-
 ## Prosjektstruktur
 
 - `lyd-core/` — ren domenelogikk, uten Miso-avhengighet. Testes med nativ GHC
