@@ -5,6 +5,8 @@ lydtrykknivå og avstand til lydkilde (varmepumpe-utedel), skrevet i Haskell
 og kompilert til WebAssembly med [Miso](https://github.com/haskell-miso/miso)
 og GHC sin WASM-backend. Ingen backend — kun statiske filer.
 
+Se [Mathematica kladdebok](https://www.wolframcloud.com/obj/204dacbd-5734-401e-8cc5-6bf7e869f2a0).
+
 **Live:** <https://ttnesby.github.io/lydtrykk/>
 
 ## Hva den gjør
