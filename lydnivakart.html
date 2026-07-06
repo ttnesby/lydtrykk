@@ -76,6 +76,8 @@
   .pwrap{ position:relative; width:26px; height:26px; }
   .ptri{ position:absolute; left:50%; top:50%; width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:16px solid var(--accent); transform-origin:50% 50%; filter:drop-shadow(0 0 1px #fff); }
   .pnum{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:18px; height:18px; border-radius:50%; background:var(--accent); color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; border:1.5px solid #fff; box-shadow:0 0 2px rgba(0,0,0,.4); }
+  /* utedel med lokale lydkilde-verdier: blått nummer (samme blå som håndtakene) */
+  .pnum.pl{ background:#1d6fb8; }
   .handleic{ width:15px;height:15px;border-radius:50%;background:#fff;border:2px solid var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.3);cursor:grab; }
   .trashic{ width:24px;height:24px;border-radius:50%;background:#fff;border:2px solid var(--bad);display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.3); }
   /* rutenett-hjørne: liten firkantet håndtak, blå (samme språk som gamle nabopunkter) */
@@ -152,6 +154,27 @@
         <input type="number" id="kab" min="0" step="1" value="0">
       </div>
       <div class="eff" id="eff"></div>
+      <p class="note">Gjelder alle utedeler som ikke har egne, lokale verdier. Velg en utedel i kartet for å gi den lokale verdier (f.eks. endeleiligheter med annen pumpe eller demping).</p>
+    </div>
+
+    <div class="grp" id="pgrp" style="display:none">
+      <label class="l">Valgt utedel · <span id="pnavn"></span></label>
+      <div class="felt">
+        <label class="ck"><input type="checkbox" id="plokal"> Lokale verdier for denne utedelen</label>
+      </div>
+      <div class="felt">
+        <label class="fl" for="plyd">Lydnivå 1 m (dBA)</label>
+        <input type="number" id="plyd" min="40" max="70" step="1">
+      </div>
+      <div class="felt">
+        <label class="ck"><input type="checkbox" id="pvegg"> +3 dB vegg</label>
+      </div>
+      <div class="felt">
+        <label class="fl" for="pkab">Kabinettdemping (dB)</label>
+        <input type="number" id="pkab" min="0" step="1">
+      </div>
+      <div class="eff" id="peff"></div>
+      <p class="note">Uten hake arver utedelen «Lydkilde»-verdiene over og følger dem når de endres. Sett haken for å gi den egne verdier (starter som kopi av de globale) – fjern haken for å gå tilbake til arv. Utedeler med lokale verdier har blått nummer i kartet, og lokale verdier lagres i oppsettsfila.</p>
     </div>
 
     <div class="grp">
@@ -188,7 +211,7 @@
       <button class="btn" id="save">Lagre til fil</button>
       <button class="btn" id="load">Last fra fil</button>
       <input type="file" id="loadfile" accept=".json,application/json" hidden>
-      <p class="note">Lagrer alt – soner, lydkilde, alle utedeler (plassering + vinkel), rutenettets hjørner/oppløsning og kartutsnitt – som en JSON-fil i nedlastingsmappa. «Last fra fil» setter alt tilbake til lagret tilstand.</p>
+      <p class="note">Lagrer alt – soner, lydkilde, alle utedeler (plassering + vinkel + eventuelle lokale verdier), rutenettets hjørner/oppløsning og kartutsnitt – som en JSON-fil i nedlastingsmappa. «Last fra fil» setter alt tilbake til lagret tilstand.</p>
     </div>
 
     <div class="grp">
@@ -371,26 +394,43 @@ function akustikkFeilet(melding){
   document.getElementById('gridinfo').textContent='Rutenett utilgjengelig – beregningskjernen mangler.';
 }
 
-function srcLevel(){
-  const lyd=Math.min(70,Math.max(40,parseFloat(document.getElementById('lyd').value)||0));
-  const vegg=document.getElementById('vegg').checked ? 3 : 0;
-  const kab=Math.max(0,parseFloat(document.getElementById('kab').value)||0);
+// Effektivt kildenivå av et sett verdier {lyd, vegg, kab} – samme klamping
+// og +3/−kab-regnestykke som kjernens effektivtKildenivaa (veggtillegget er
+// lagt på her, så kjernen får ferdig effektivt nivå ved 1 m).
+function nivaaAv(v){
+  const lyd=Math.min(70,Math.max(40,parseFloat(v.lyd)||0));
+  const vegg=v.vegg ? 3 : 0;
+  const kab=Math.max(0,parseFloat(v.kab)||0);
   return lyd+vegg-kab;
 }
+function globaleVerdier(){
+  return {
+    lyd:parseFloat(document.getElementById('lyd').value)||0,
+    vegg:document.getElementById('vegg').checked,
+    kab:parseFloat(document.getElementById('kab').value)||0,
+  };
+}
+function srcLevel(){ return nivaaAv(globaleVerdier()); }
+// Pumpens effektive nivå: lokale verdier hvis satt (p.lokal), ellers arves
+// de globale «Lydkilde»-verdiene – levende arv, ikke kopi, så globale
+// endringer slår igjennom i alle utedeler uten lokale verdier.
+function effLevel(p){ return p&&p.lokal ? nivaaAv(p.lokal) : srcLevel(); }
 function dirGain(angleDeg){ return WASM.acoustics_dirGain(angleDeg); }
 function reqDist(angleDeg,limit){ return WASM.acoustics_reqDist(srcLevel(),limit,angleDeg); }
 // destPoint/bearing importeres fra gridGeo.js
 function lobePts(p,limit){
+  const src=effLevel(p);   // halvbuen følger pumpens eget nivå
   const pts=[];
-  for(let a=-90;a<=90;a+=6){ const r=reqDist(a,limit); pts.push(destPoint(p.latlng.lat,p.latlng.lng,p.brg+a,r)); }
+  for(let a=-90;a<=90;a+=6){ const r=WASM.acoustics_reqDist(src,limit,a); pts.push(destPoint(p.latlng.lat,p.latlng.lng,p.brg+a,r)); }
   return pts;
 }
 
 // ---- tilstand ----
 let pumps=[], sel=null, pumpNo=0;   // sel = valgt pumpe-id, eller null
 const HANDLE_M=8;
-function arrowIcon(brg,num){ return L.divIcon({className:'',iconSize:[26,26],iconAnchor:[13,13],
-  html:`<div class="pwrap"><span class="ptri" style="transform:translate(-50%,-50%) rotate(${brg}deg)"></span><span class="pnum">${num}</span></div>`}); }
+// 'lokal' farger nummeret blått – synlig skille på utedeler med egne verdier
+function arrowIcon(brg,num,lokal){ return L.divIcon({className:'',iconSize:[26,26],iconAnchor:[13,13],
+  html:`<div class="pwrap"><span class="ptri" style="transform:translate(-50%,-50%) rotate(${brg}deg)"></span><span class="pnum${lokal?' pl':''}">${num}</span></div>`}); }
 
 // ---- valg + kart-kontroller (vinkelhåndtak + søppeltønne) ----
 const dialArm=L.polyline([],{color:'#23231f',weight:1.5,dashArray:'3 3'});
@@ -427,17 +467,17 @@ function positionControls(){
 handle.on('drag',()=>{ const p=curPump(); if(!p)return;
   p.brg=Math.round(bearing(p.latlng,handle.getLatLng()));
   dialArm.setLatLngs([p.latlng,handle.getLatLng()]);
-  p.marker.setIcon(arrowIcon(p.brg,p.num));
+  p.marker.setIcon(arrowIcon(p.brg,p.num,!!p.lokal));
   const tp=trashPos(p); if(tp) trash.setLatLng(tp);   // tønna følger med (bak tallet)
   scheduleDraw(p);
 });
 handle.on('dragend',()=>{ const p=curPump(); if(!p)return; positionControls(); scheduleGrid(); });
 
-function deselect(){ sel=null; pumps.forEach(p=>p.marker.setZIndexOffset(0)); positionControls(); }
+function deselect(){ sel=null; pumps.forEach(p=>p.marker.setZIndexOffset(0)); positionControls(); renderValgt(); }
 // Klikk på en allerede valgt markør opphever valget (toggle).
 function selectPump(id){
   if(sel===id){ deselect(); return; }
-  sel=id; pumps.forEach(p=>p.marker.setZIndexOffset(p.id===id?1000:0)); positionControls();
+  sel=id; pumps.forEach(p=>p.marker.setZIndexOffset(p.id===id?1000:0)); positionControls(); renderValgt();
 }
 // Reposisjoner kontrollene ved zoom (piksel-avstanden til tønna avhenger av zoom).
 map.on('zoomend',()=>{ if(sel!=null) positionControls(); });
@@ -448,12 +488,15 @@ let rafId=null, rafPump=null;
 function scheduleDraw(p){ rafPump=p; if(rafId)return; rafId=requestAnimationFrame(()=>{rafId=null; drawPump(rafPump);}); }
 
 // ---- pumper ----
-function addPump(latlng,brg,num){
+// 'lokal' (valgfri) = {lyd, vegg, kab} – utedelens egne lydkilde-verdier;
+// null/utelatt = arv de globale (se effLevel).
+function addPump(latlng,brg,num,lokal){
   if(brg==null) brg=parseInt(document.getElementById('defdir').value,10);
   if(num==null) num=++pumpNo;
-  const m=L.marker(latlng,{icon:arrowIcon(brg,num),draggable:true}).addTo(map);
+  if(lokal==null) lokal=null;
+  const m=L.marker(latlng,{icon:arrowIcon(brg,num,!!lokal),draggable:true}).addTo(map);
   const zones={}; ALLE_GRENSER.forEach(lim=>{ zones[lim]=L.polygon([],{color:heat(lim),weight:1.5,fillColor:heat(lim),fillOpacity:.10}); });
-  const p={id:num,num:num,marker:m,zones:zones,latlng:latlng,brg:brg};
+  const p={id:num,num:num,marker:m,zones:zones,latlng:latlng,brg:brg,lokal:lokal};
   m.on('click',e=>{L.DomEvent.stop(e);selectPump(p.id);});
   m.on('drag',e=>{ interacting=true; p.latlng=e.target.getLatLng(); scheduleDraw(p); if(sel===p.id) positionControls(); scheduleGrid(); });
   m.on('dragend',()=>{ interacting=false; drawPump(p); scheduleGrid(); if(sel===p.id) positionControls(); });
@@ -482,9 +525,51 @@ function removePump(id){
   map.removeLayer(pumps[i].marker);
   ALLE_GRENSER.forEach(lim=>{ const z=pumps[i].zones[lim]; if(map.hasLayer(z)) map.removeLayer(z); });
   pumps.splice(i,1);
-  if(sel===id){ sel=null; positionControls(); }
+  if(sel===id){ sel=null; positionControls(); renderValgt(); }
   updateCounts(); scheduleGrid();
 }
+
+// ---- valgt utedel: lokale lydkilde-verdier (arv/vis/endre/tilbakestill) ----
+// Panelseksjonen «Valgt utedel» speiler den valgte pumpa: uten hake vises de
+// globale verdiene nedtonet (levende arv), med hake redigeres pumpas egne.
+// Haken PÅ kopierer de globale verdiene som startpunkt; haken AV nuller
+// p.lokal og pumpa arver igjen. Feltene skrives bare her (ikke fra
+// input-hendelsene under), så skriving i et felt aldri overstyres midt i.
+function renderValgt(){
+  const grp=document.getElementById('pgrp'), p=curPump();
+  if(!p){ grp.style.display='none'; return; }
+  grp.style.display='';
+  document.getElementById('pnavn').textContent='nr. '+p.num;
+  const lokal=!!p.lokal, v=lokal?p.lokal:globaleVerdier();
+  document.getElementById('plokal').checked=lokal;
+  const plyd=document.getElementById('plyd'), pvegg=document.getElementById('pvegg'), pkab=document.getElementById('pkab');
+  plyd.value=v.lyd; pvegg.checked=!!v.vegg; pkab.value=v.kab;
+  plyd.disabled=pvegg.disabled=pkab.disabled=!lokal;
+  visValgtEff(p);
+}
+function visValgtEff(p){
+  document.getElementById('peff').innerHTML=
+    `Effektivt kildenivå: <b>${effLevel(p).toFixed(0)} dB(A)</b>${p.lokal?'':' · arver globale verdier'}`;
+}
+document.getElementById('plokal').addEventListener('change',e=>{
+  const p=curPump(); if(!p) return;
+  p.lokal=e.target.checked ? globaleVerdier() : null;
+  p.marker.setIcon(arrowIcon(p.brg,p.num,!!p.lokal));
+  renderValgt(); drawPump(p); scheduleGrid();
+});
+['plyd','pvegg','pkab'].forEach(id=>{
+  const el=document.getElementById(id);
+  const endret=()=>{
+    const p=curPump(); if(!p||!p.lokal) return;
+    p.lokal={
+      lyd:parseFloat(document.getElementById('plyd').value)||0,
+      vegg:document.getElementById('pvegg').checked,
+      kab:parseFloat(document.getElementById('pkab').value)||0,
+    };
+    visValgtEff(p); drawPump(p); scheduleGrid();
+  };
+  el.addEventListener('input',endret); el.addEventListener('change',endret);
+});
 
 // ---- rutenett (grid) ----
 // Erstatter nabopunktene (ISSUE-9): et rutenett med valgt oppløsning regner
@@ -622,8 +707,10 @@ function gjenoppbyggPool(reqId){
   startPool();
 }
 
+// Hver pumpe med sitt effektive nivå ('nivaa') – workerne/kjernen regner
+// per-kilde, så lokale verdier slår inn i rutenettet og fasadepunktene.
 function pumpsLocal(origin){
-  return pumps.map(p=>({ ...toLocal(p.latlng,origin), brg:p.brg }));
+  return pumps.map(p=>({ ...toLocal(p.latlng,origin), brg:p.brg, nivaa:effLevel(p) }));
 }
 // Husrekkene i rutenettets lokale plan, flatt for WASM-kallet: alle hjørnene
 // som [x0,y0,x1,…] pluss antall hjørner per polygon (grensene i den flate
@@ -719,7 +806,7 @@ function sluttFramdrift(reqId,avbrutt){
 function computeGrid(rows,cols,res,origin){
   if(!gridWorkers.length) return Promise.resolve(null);
   const reqId=++gridReqSeq;
-  const src=srcLevel(), pl=pumpsLocal(origin), polys=husPolysLocal(origin);
+  const pl=pumpsLocal(origin), polys=husPolysLocal(origin);
   const perWorker=Math.ceil(rows/gridWorkers.length);
   startFramdrift(reqId,rows,cols,res,origin,Math.min(gridWorkers.length,Math.ceil(rows/perWorker)));
   const jobs=gridWorkers.map((w,i)=>{
@@ -750,7 +837,7 @@ function computeGrid(rows,cols,res,origin){
       w.addEventListener('message',onMsg);
       w.addEventListener('error',onErr);
       w.addEventListener('messageerror',onErr);
-      w.postMessage({reqId,rowStart,rowEnd,cols,cellSizeM:res,pumps:pl,srcLevel:src,polys});
+      w.postMessage({reqId,rowStart,rowEnd,cols,cellSizeM:res,pumps:pl,polys});
     });
   });
   return Promise.all(jobs).then(parts=>{
@@ -760,9 +847,12 @@ function computeGrid(rows,cols,res,origin){
     if(avbrutt) return null;
     const grid=new Float64Array(rows*cols);
     parts.forEach(part=>{ if(part) grid.set(part.values, part.rowStart*cols); });
-    // 'uskjermet': en worker med eldre binær (uten skjerming-eksporten) har
-    // regnet uten husskjerming – konservativt riktig, men skal synes i UI-et.
-    return { grid, uskjermet: parts.some(part=>part && part.uskjermet) };
+    // 'uskjermet'/'fellesnivaa': en worker med eldre binær har regnet uten
+    // husskjerming / med høyeste nivå for alle pumpene – konservativt
+    // riktig begge veier, men skal synes i UI-et.
+    return { grid,
+             uskjermet: parts.some(part=>part && part.uskjermet),
+             fellesnivaa: parts.some(part=>part && part.fellesnivaa) };
   });
 }
 
@@ -798,6 +888,10 @@ async function recomputeGrid(){
   if(utfall.uskjermet){
     const el=document.getElementById('gridinfo');
     if(el) el.textContent+=' · kjernen mangler skjerming-eksporten (eldre binær) – regnet uten husskjerming (konservativt)';
+  }
+  if(utfall.fellesnivaa){
+    const el=document.getElementById('gridinfo');
+    if(el) el.textContent+=' · kjernen mangler per-utedel-eksporten (eldre binær) – regnet med høyeste nivå for alle utedelene (konservativt)';
   }
 }
 function updateGridInfo(cols,rows,res,coarsened){
@@ -879,6 +973,7 @@ function renderContours(g){
 function updateKilde(){
   const el=document.getElementById('eff');
   if(el) el.innerHTML=`Effektivt kildenivå: <b>${srcLevel().toFixed(0)} dB(A)</b>`;
+  renderValgt();   // speilet i «Valgt utedel» følger de globale verdiene (arv)
 }
 function updateCounts(){
   const el=document.getElementById('counts'); if(!el) return;
@@ -933,7 +1028,7 @@ gridresEl.addEventListener('change',()=>{
 document.getElementById('gridOn').addEventListener('change',e=>setGridOn(e.target.checked));
 document.getElementById('clear').addEventListener('click',()=>{
   [...pumps].forEach(p=>removePump(p.id));
-  pumpNo=0; sel=null; positionControls(); updateCounts();
+  pumpNo=0; sel=null; positionControls(); renderValgt(); updateCounts();
 });
 
 // ---- lagre / laste oppsett (JSON til/fra nedlastingsmappa) ----
@@ -952,7 +1047,13 @@ function snapshot(){
       husSkjerm:document.getElementById('husSkjerm').checked,
       husVerst:document.getElementById('husVerst').checked,
     },
-    pumps:pumps.map(p=>({num:p.num,lat:p.latlng.lat,lng:p.latlng.lng,brg:p.brg})),
+    // 'lokal' bare når utedelen har egne verdier (additivt felt – eldre
+    // filer/lesere er upåvirket, ingen versjonsbump)
+    pumps:pumps.map(p=>{
+      const o={num:p.num,lat:p.latlng.lat,lng:p.latlng.lng,brg:p.brg};
+      if(p.lokal) o.lokal={lyd:p.lokal.lyd,vegg:!!p.lokal.vegg,kab:p.lokal.kab};
+      return o;
+    }),
     grid:{ sw:{lat:corners.sw.lat,lng:corners.sw.lng}, ne:{lat:corners.ne.lat,lng:corners.ne.lng}, res:gridRes, on:gridOn },
     view:{center:[c.lat,c.lng],zoom:map.getZoom()},
   };
@@ -977,9 +1078,9 @@ function restore(d){
   if(opp.husSkjerm!=null) document.getElementById('husSkjerm').checked=opp.husSkjerm;
   if(opp.husVerst!=null) document.getElementById('husVerst').checked=opp.husVerst;
   husEndret();   // synk underboksenes deaktivert-tilstand + tegning med lastet fil
-  opp.pumps.forEach(p=>{ addPump(L.latLng(p.lat,p.lng),p.brg,p.num); });
+  opp.pumps.forEach(p=>{ addPump(L.latLng(p.lat,p.lng),p.brg,p.num,p.lokal); });
   pumpNo=pumps.reduce((m,p)=>Math.max(m,p.num),0);
-  sel=null; positionControls();
+  sel=null; positionControls(); renderValgt();
   // rutenett: eksplisitt lagret (v3), ellers tilpasset pumpene som nettopp ble lastet
   setupGrid(opp.grid);
   setGridOn(opp.gridOn);
@@ -1064,7 +1165,7 @@ async function loadHusrekker(){
 // uavhengig av rutenettet – punktene skal finnes også med rutenettet av).
 // Kalles fra runGridLoop (samme utløsere som rutenettet); mangler eksporten
 // (eldre deployet binær) ligger featuren stille med én console-advarsel.
-let fasadeLayers=[], fasadeVarslet=false;
+let fasadeLayers=[], fasadeVarslet=false, fasadeFellesVarslet=false;
 function oppdaterFasadeVerst(){
   fasadeLayers.forEach(l=>map.removeLayer(l)); fasadeLayers=[];
   if(!WASM || !husRekker.length || !pumps.length
@@ -1077,14 +1178,26 @@ function oppdaterFasadeVerst(){
   }
   const origin={lat:CENTER[0],lng:CENTER[1]};
   const pl=pumpsLocal(origin);
-  const xyb=new Float64Array(pl.length*3);
-  pl.forEach((p,i)=>{ xyb[i*3]=p.x; xyb[i*3+1]=p.y; xyb[i*3+2]=p.brg; });
   const antall=[], xy=[];
   husRekker.forEach(r=>{ antall.push(r.punkter.length);
     r.punkter.forEach(pt=>{ const l=toLocal(pt,origin); xy.push(l.x,l.y); }); });
   const ut=new Float64Array(husRekker.length*3);
-  WASM.acoustics_fasadeVerst(srcLevel(), xyb, new Float64Array(xy), new Float64Array(antall),
-    document.getElementById('husSkjerm').checked?1:0, ut);
+  const skjerm=document.getElementById('husSkjerm').checked?1:0;
+  if(typeof WASM.acoustics_fasadeVerstPerKilde==='function'){
+    // eget nivå per pumpe (lokale verdier), stride-4 [x,y,brg,nivaa]
+    const xybn=new Float64Array(pl.length*4);
+    pl.forEach((p,i)=>{ xybn[i*4]=p.x; xybn[i*4+1]=p.y; xybn[i*4+2]=p.brg; xybn[i*4+3]=p.nivaa; });
+    WASM.acoustics_fasadeVerstPerKilde(xybn, new Float64Array(xy), new Float64Array(antall), skjerm, ut);
+  } else {
+    // eldre binær: delt nivå – høyeste er konservativt (nivåene kan bare
+    // bli for høye); én advarsel når lokale verdier faktisk er i bruk
+    const felles=Math.max(...pl.map(p=>p.nivaa));
+    if(pl.some(p=>p.nivaa!==felles) && !fasadeFellesVarslet){ fasadeFellesVarslet=true;
+      console.warn('Verste fasadepunkt: kjernen mangler acoustics_fasadeVerstPerKilde (eldre binær) – regner med høyeste nivå for alle utedelene (konservativt).'); }
+    const xyb=new Float64Array(pl.length*3);
+    pl.forEach((p,i)=>{ xyb[i*3]=p.x; xyb[i*3+1]=p.y; xyb[i*3+2]=p.brg; });
+    WASM.acoustics_fasadeVerst(felles, xyb, new Float64Array(xy), new Float64Array(antall), skjerm, ut);
+  }
   const aktive=[...activeLimits].sort((x,y)=>x-y);
   husRekker.forEach((r,i)=>{
     const niv=ut[i*3+2];

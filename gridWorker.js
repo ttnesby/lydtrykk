@@ -32,15 +32,20 @@ const acousticsReady = Promise.race([
 // metersPerDeg/toLocal i lydnivakart.html. Cellen (row,col) ligger i
 // (x,y) = (col*cellSizeM, row*cellSizeM). Vinkelen beregnes med samme
 // bearing-konvensjon (0° = nord, medurs) som resten av appen bruker.
+// Hver pumpe kommer med sitt eget effektive nivå ('nivaa' – lokale verdier
+// per utedel), som flat stride-4-array [x,y,brg,nivaa] til PerKilde-
+// eksportene. En eldre binær uten dem faller tilbake på de gamle eksportene
+// (delt nivå) med det HØYESTE nivået for alle pumpene – konservativt riktig
+// (nivåene kan bare bli for høye), og svaret merkes 'fellesnivaa' så
+// hovedtråden viser det synlig i stedet for at det regnes stille feil.
 // 'polys' (valgfri) er husrekkene i samme lokale plan – {xy, antall} med alle
 // hjørnene flatt [x0,y0,x1,…] og antall hjørner per polygon. Med polygoner
-// brukes acoustics_gridStripeSkjermet (NaN-maskering + siktlinjeskjerming,
-// Lyd.Felt.rutenettStripeSkjermet). Mangler den eksporten (eldre deployet
-// binær) regnes stripen USKJERMET med den gamle eksporten og svaret merkes
-// 'uskjermet' – trygt i konservativ retning (skjerming senker bare nivåene),
-// og hovedtråden viser det synlig i stedet for at runden feiler.
+// brukes skjermet-eksporten (NaN-maskering + siktlinjeskjerming,
+// Lyd.Felt.rutenettStripeSkjermet). Mangler den (eldre deployet binær)
+// regnes stripen USKJERMET og svaret merkes 'uskjermet' – også trygt i
+// konservativ retning (skjerming senker bare nivåene).
 self.onmessage = async (e) => {
-  const { reqId, rowStart, rowEnd, cols, cellSizeM, pumps, srcLevel, polys } = e.data;
+  const { reqId, rowStart, rowEnd, cols, cellSizeM, pumps, polys } = e.data;
   await acousticsReady;
   if (!acoustics || typeof acoustics.acoustics_gridStripe !== "function") {
     self.postMessage({ reqId, error: true });
@@ -50,24 +55,43 @@ self.onmessage = async (e) => {
   const rows = rowEnd - rowStart;
   const values = new Float64Array(rows * cols);
   const medSkjerm = polys && polys.antall && polys.antall.length > 0;
+  const perKilde = typeof acoustics.acoustics_gridStripePerKilde === "function";
   let uskjermet = false;
+  let fellesnivaa = false;
 
   if (pumps.length === 0) {
     values.fill(-Infinity);
+  } else if (perKilde) {
+    // Pumpene som flat stride-4-array [x0,y0,brg0,nivaa0, x1,…]; Haskell
+    // fyller 'values' radmajor i ett kall.
+    const xybn = new Float64Array(pumps.length * 4);
+    for (let i = 0; i < pumps.length; i++) {
+      const p = pumps[i];
+      xybn[i * 4] = p.x; xybn[i * 4 + 1] = p.y; xybn[i * 4 + 2] = p.brg; xybn[i * 4 + 3] = p.nivaa;
+    }
+    if (medSkjerm && typeof acoustics.acoustics_gridStripeSkjermetPerKilde === "function") {
+      acoustics.acoustics_gridStripeSkjermetPerKilde(xybn, polys.xy, polys.antall, rowStart, rowEnd, cols, cellSizeM, values);
+    } else {
+      uskjermet = medSkjerm;
+      acoustics.acoustics_gridStripePerKilde(xybn, rowStart, rowEnd, cols, cellSizeM, values);
+    }
   } else {
-    // Pumpene som flat stride-3-array [x0,y0,brg0, x1,…]; Haskell fyller
-    // 'values' radmajor i ett kall.
+    // Eldre binær (uten PerKilde-eksportene): gamle eksporter med delt nivå.
+    // Høyeste nivå for alle er konservativt; flagges bare når nivåene
+    // faktisk er ulike (ellers er svaret eksakt).
+    const felles = Math.max(...pumps.map((p) => p.nivaa));
+    fellesnivaa = pumps.some((p) => p.nivaa !== felles);
     const xyb = new Float64Array(pumps.length * 3);
     for (let i = 0; i < pumps.length; i++) {
       const p = pumps[i];
       xyb[i * 3] = p.x; xyb[i * 3 + 1] = p.y; xyb[i * 3 + 2] = p.brg;
     }
     if (medSkjerm && typeof acoustics.acoustics_gridStripeSkjermet === "function") {
-      acoustics.acoustics_gridStripeSkjermet(srcLevel, xyb, polys.xy, polys.antall, rowStart, rowEnd, cols, cellSizeM, values);
+      acoustics.acoustics_gridStripeSkjermet(felles, xyb, polys.xy, polys.antall, rowStart, rowEnd, cols, cellSizeM, values);
     } else {
       uskjermet = medSkjerm;
-      acoustics.acoustics_gridStripe(srcLevel, xyb, rowStart, rowEnd, cols, cellSizeM, values);
+      acoustics.acoustics_gridStripe(felles, xyb, rowStart, rowEnd, cols, cellSizeM, values);
     }
   }
-  self.postMessage({ reqId, rowStart, values, uskjermet }, [values.buffer]);
+  self.postMessage({ reqId, rowStart, values, uskjermet, fellesnivaa }, [values.buffer]);
 };
