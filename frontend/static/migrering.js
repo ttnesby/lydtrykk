@@ -53,6 +53,10 @@ export function normaliserOppsett(d) {
     husOn: s.husOn != null ? !!s.husOn : null,
     husSkjerm: s.husSkjerm != null ? !!s.husSkjerm : null,
     husVerst: s.husVerst != null ? !!s.husVerst : null,
+    // «forklar celle»-visningen (stråler + rutenett-linjer), samme additive
+    // behold-nåværende-mønster som husrekke-bryterne over
+    forklarOn: s.forklarOn != null ? !!s.forklarOn : null,
+    forklarGrid: s.forklarGrid != null ? !!s.forklarGrid : null,
     // eldre filer kan ha et 'nabos'-felt – det ignoreres stille, siden
     // rutenettet erstattet enkeltpunkt-sjekken
     pumps: (d.pumps || []).map(p => ({

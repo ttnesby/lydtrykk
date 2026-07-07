@@ -31,6 +31,11 @@ module Lyd.Felt
     Stripe (..),
     rutenettStripe,
     rutenettStripeSkjermet,
+
+    -- * Forklaring (per-kilde nedbrytning, kart-simulatorens «forklar celle»)
+    KildeBidrag (..),
+    kildeFradrag,
+    punktBidragForklart,
   )
 where
 
@@ -234,12 +239,46 @@ nivaaIPunktSkjermet plasserte polygoner pt
       map (forenkletPolygon forenkleToleranseM) (filter ((>= 3) . length) polygoner)
     skjermetBidrag p =
       let Desibel l = punktBidrag p pt
-       in Desibel (l - fradrag (pkPos p))
-    fradrag pos
-      | any (blokkerer pos) gyldige = skjermingDb
-      | otherwise = 0
-    blokkerer pos poly =
-      not (egetPolygon pos poly) && segmentKrysserPolygon pos pt poly
+       in Desibel (l - kildeFradrag gyldige pt p)
+
+-- | Fradraget (0 eller 'skjermingDb') for én kildes bidrag i et punkt, gitt
+-- (allerede forenklede, ≥3-hjørners) polygoner. Delt av 'nivaaIPunktSkjermet'
+-- og 'punktBidragForklart' — én sannhet om hva som gir skjerming.
+kildeFradrag :: [Polygon] -> Punkt -> PlassertKilde -> Double
+kildeFradrag gyldige pt p
+  | any blokkerer gyldige = skjermingDb
+  | otherwise = 0
+  where
+    pos = pkPos p
+    blokkerer poly = not (egetPolygon pos poly) && segmentKrysserPolygon pos pt poly
+
+-- | Forklaring: hvert kildebidrag i et punkt, uskjermet og etter skjerming
+-- ('nivaaIPunktSkjermet' sin per-kilde-logikk, men uten å kollapse til én
+-- sum) — for «forklar celle»-visningen i kart-simulatoren (stråler fra hver
+-- pumpe til det klikkede punktet). I MOTSETNING til 'nivaaIPunktSkjermet'
+-- maskeres IKKE punkter inne i et polygon her: JS avgjør selv (ved å slå opp
+-- i det allerede beregnede rutenettet) om det klikkede punktet er maskert,
+-- og viser strålene med en merknad likevel — de er informative selv om
+-- punktet i praksis ikke telles med i visningen.
+data KildeBidrag = KildeBidrag
+  { kbAvstand :: !Double,
+    kbVinkelGrader :: !Double,
+    kbNivaaUskjermet :: !Double,
+    kbNivaaEtterSkjerming :: !Double
+  }
+  deriving (Eq, Show)
+
+punktBidragForklart :: [PlassertKilde] -> [Polygon] -> Punkt -> [KildeBidrag]
+punktBidragForklart plasserte polygoner pt =
+  [ KildeBidrag avstandM (retningsavvik p pt) uskjermet (uskjermet - kildeFradrag gyldige pt p)
+    | p <- plasserte,
+      let Punkt kx ky = pkPos p
+          avstandM = max (sqrt ((pX pt - kx) * (pX pt - kx) + (pY pt - ky) * (pY pt - ky))) 1
+          Desibel uskjermet = punktBidrag p pt
+  ]
+  where
+    gyldige =
+      map (forenkletPolygon forenkleToleranseM) (filter ((>= 3) . length) polygoner)
 
 -- | En rad-stripe av rutenettet: radene [radStart, radSlutt) over
 -- 'stKolonner' kolonner med kvadratiske celler på 'stCelleM'. Celle

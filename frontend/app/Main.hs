@@ -116,6 +116,17 @@ foreign export javascript "acoustics_gridStripeSkjermetPerKilde sync"
 foreign export javascript "acoustics_fasadeVerstPerKilde sync"
   js_fasadeVerstPerKilde :: JSVal -> JSVal -> JSVal -> Int -> JSVal -> IO ()
 
+-- Punktforklaring ('Lyd.Felt.punktBidragForklart'): per-kilde avstand/vinkel/
+-- nivå før og etter skjerming for ett klikket rutenettpunkt — kartets
+-- «forklar celle»-visning (stråler fra hver pumpe), ikke den varme
+-- rutenett-stien. En ny eksport av samme grunn som variantene over: JS
+-- feature-detekterer på navnet. Ingen delt-nivå/legacy-variant — featuren
+-- er ny, så det finnes ingen eldre binær å falle tilbake fra. Nivået
+-- returneres alltid både før og etter skjerming; JS avgjør selv (ut fra
+-- «Skjermer»-boksen) hvilket som vises, i stedet for et eget flagg her.
+foreign export javascript "acoustics_forklarPunkt sync"
+  js_forklarPunkt :: Double -> Double -> JSVal -> JSVal -> JSVal -> JSVal -> IO ()
+
 foreign import javascript unsafe "$1.length" js_arrLen :: JSVal -> Int
 foreign import javascript unsafe "$1[$2]" js_arrAt :: JSVal -> Int -> Double
 
@@ -250,6 +261,18 @@ fasadeVerstFelles plasserte polyXY polyAntall medSkjerm ut = do
         Just (Punkt px py, n) -> [px, py, n]
         Nothing -> [0 / 0, 0 / 0, 0 / 0]
   skrivFloat64 ut (VS.fromList (concatMap trippel polygoner))
+
+-- | Forklaring for ett rutenettpunkt (= 'punktBidragForklart'): skriver
+-- [avstand, vinkelGrader, nivåUskjermet, nivåEtterSkjerming] per pumpe
+-- (stride 4) inn i 'ut' (Float64Array med pumper·4 elementer, JS-preallokert
+-- ut fra antall pumper den selv sendte, samme rekkefølge som 'pumperXYBN').
+js_forklarPunkt :: Double -> Double -> JSVal -> JSVal -> JSVal -> JSVal -> IO ()
+js_forklarPunkt x y pumperXYBN polyXY polyAntall ut = do
+  plasserte <- lesPlassertePerKilde pumperXYBN
+  polygoner <- lesPolygoner polyXY polyAntall
+  let bidrag = punktBidragForklart plasserte polygoner (Punkt x y)
+      flat (KildeBidrag a v u e) = [a, v, u, e]
+  skrivFloat64 ut (VS.fromList (concatMap flat bidrag))
 
 -- | Polygonene fra flat hjørne-array [x0,y0,x1,y1,…] + antall hjørner per
 -- polygon (grensene mellom polygonene i den flate arrayen). Begge arrayene

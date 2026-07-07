@@ -169,6 +169,18 @@ flags that actually expose these symbols from the wasm binary live in
 new export needs both a `foreign export javascript` line *and* a matching
 `--export` flag.
 
+`acoustics_forklarPunkt` is the one export with no shared-level/legacy
+variant: it backs the map's «Forklar celle» debug view (see below), a
+feature new enough that there is no older binary to fall back *from*. It
+takes one point plus pumps (`…PerKilde` stride-4) and husrekke polygons, and
+writes `[avstand, vinkelGrader, nivåUskjermet, nivåEtterSkjerming]` per pump
+(`Lyd.Felt.punktBidragForklart`) — always *both* levels, so JS decides what
+to display from the «Skjermer» checkbox instead of a Haskell-side flag.
+Unlike every other point/grid function, it does **not** NaN-mask points
+inside a husrekke polygon — a user clicking just inside a facade to see
+*why* it would be masked is a legitimate use, and JS already knows the
+point's masked status for free (a lookup in the already-computed `lastGrid`).
+
 ### Single implementation: all math lives in `Lyd.Beregning`
 
 There are no JS copies of the acoustics formulas — nor of the limit table
@@ -338,6 +350,34 @@ version bump): see the shielding model under `lyd-core` and the worker
 fallback under "Parallelism". Since the rows load asynchronously and
 independently of the wasm core, `loadHusrekker()` calls `scheduleGrid()` once
 they arrive so an already-rendered grid is recomputed with shielding.
+
+### Forklar celle (`lydnivakart.html`)
+
+A pedagogical debug view for the grid's cumulative-level math, aimed at
+people without an acoustics background: the «Forklar celle» checkbox (a
+sub-item of the grid group, disabled/cleared whenever `gridOn` is off) turns
+a map click into a *ray diagram* instead of placing a pump. The click is
+snapped to the nearest actual grid lattice point (`narmesteRutenettpunkt`,
+`Math.round` against `lastGrid.res`, not the raw click coordinate), so the
+explanation always matches a cell the grid has genuinely computed rather
+than an arbitrary point. `forklarKlikk` calls `acoustics_forklarPunkt` with
+that point plus the current pumps/husrekker (same `pumpsLocal`/
+`husPolysLocal` helpers and SW-corner origin the grid itself uses, so
+shielding shown here always matches what's on screen), and `tegnForklaring`
+draws one `L.polyline` per pump to the clicked point — solid blue for a free
+sight line, dashed red where the husrekke shielding actually reduced the
+level. No polygon index is threaded through from Haskell for this: the
+husrekke polygons are already drawn on the map, so *which* row a ray crosses
+is visually obvious without the core needing to report it. A table
+(`visForklarPanel`) lists avstand/vinkel/nivå per pump plus a total from
+`acoustics_dbSum` — reusing the existing log-sum export rather than
+duplicating it in JS. A «Vis rutenett-linjer» sub-checkbox
+(`renderForklarGrid`) makes the lattice faintly visible using the same
+offscreen-canvas-then-`L.imageOverlay` technique as `renderFyll`, one thin
+line per row/column rather than one Leaflet element per point — the latter
+would be unworkable at hundreds of thousands of cells. Both checkboxes are
+persisted (`settings.forklarOn`/`settings.forklarGrid`, additive — no
+version bump), same pattern as the husrekke sub-checkboxes.
 
 ### `default.json` hybrid live-fetch
 

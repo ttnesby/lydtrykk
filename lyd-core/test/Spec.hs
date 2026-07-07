@@ -14,7 +14,7 @@ tests :: TestTree
 tests =
   testGroup
     "lyd-core"
-    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper, feltTests, skjermTests, forenklingTests, fasadeTests]
+    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper, feltTests, skjermTests, forklaringTests, forenklingTests, fasadeTests]
 
 grenseTests :: TestTree
 grenseTests =
@@ -498,6 +498,47 @@ skjermTests =
     -- L-form: 4×4 med et 2×2-hakk i NØ-hjørnet
     lForm = [Punkt 0 0, Punkt 4 0, Punkt 4 2, Punkt 2 2, Punkt 2 4, Punkt 0 4]
     -- «veggen»: lav, bred rekke tvers over origo; kilden bak, punktet foran
+    vegg = [Punkt (-5) (-1), Punkt 5 (-1), Punkt 5 1, Punkt (-5) 1]
+    bakVeggen = pk53 (Punkt 0 10) 180
+    foranVeggen = Punkt 0 (-10)
+
+-- | Punktforklaringen ('Lyd.Felt.punktBidragForklart') for kart-simulatorens
+-- «forklar celle»-visning: samme per-kilde-skjermingsregel som
+-- 'nivaaIPunktSkjermet', men uten å kollapse til én sum og uten
+-- NaN-maskering av punkter inne i et polygon (JS avgjør selv om det
+-- klikkede punktet er maskert, ved å slå opp i det allerede beregnede
+-- rutenettet).
+forklaringTests :: TestTree
+forklaringTests =
+  testGroup
+    "punktforklaring (Lyd.Felt.punktBidragForklart)"
+    [ testCase "blokkert kilde senkes nøyaktig skjermingDb, fri kilde uendret" $ do
+        let [b] = punktBidragForklart [bakVeggen] [vegg] foranVeggen
+        assertBool "blokkert: uskjermet - etterSkjerming == skjermingDb" $
+          abs ((kbNivaaUskjermet b - kbNivaaEtterSkjerming b) - skjermingDb) < 1e-9
+        let [f] = punktBidragForklart [bakVeggen] [vegg] (Punkt 0 3)
+        assertBool "fri siktlinje: uendret" $
+          abs (kbNivaaUskjermet f - kbNivaaEtterSkjerming f) < 1e-9,
+      testCase "punkt inne i polygon regnes likevel (ikke maskert, i motsetning til nivaaIPunktSkjermet)" $
+        assertBool "ingen NaN" $
+          not (any (isNaN . kbNivaaEtterSkjerming) (punktBidragForklart [bakVeggen] [vegg] (Punkt 0 0))),
+      testProperty "lengde og rekkefølge følger plasserte kilder" $
+        forAll genPlasserte $ \plasserte ->
+          forAll genPolygoner $ \polys ->
+            forAll genPunkt $ \pt ->
+              length (punktBidragForklart plasserte polys pt) === length plasserte,
+      testProperty "log-sum av nivaaEtterSkjerming = nivaaIPunktSkjermet (utenfor maskerte celler)" $
+        forAll genPlasserte $ \plasserte ->
+          forAll genPolygoner $ \polys ->
+            forAll genPunkt $ \pt ->
+              (not (null plasserte) && not (any (`punktIPolygon` pt) polys)) ==>
+                let bidrag = punktBidragForklart plasserte polys pt
+                    total = dBA (kumulativ [Desibel (kbNivaaEtterSkjerming b) | b <- bidrag])
+                    forventet = nivaaIPunktSkjermet plasserte polys pt
+                 in counterexample (show (total, forventet)) $
+                      abs (total - forventet) < 1e-6
+    ]
+  where
     vegg = [Punkt (-5) (-1), Punkt 5 (-1), Punkt 5 1, Punkt (-5) 1]
     bakVeggen = pk53 (Punkt 0 10) 180
     foranVeggen = Punkt 0 (-10)

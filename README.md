@@ -84,6 +84,17 @@ andre offsettene er A = 10 dBA og B = 5 dBA strengere enn C.
   aktive grensen punktet overskrider (grå = under alle), med dB-verdien som
   fast etikett. Prøvingen og verste-punkt-valget ligger i kjernen
   (`Lyd.Felt.versteFasadepunkt`, eksporten `acoustics_fasadeVerst`).
+- **Forklar celle**: en pedagogisk visning for å gjøre selve regnestykket bak
+  et rutenettpunkt begripelig, ikke bare sluttresultatet. «Forklar celle»
+  (underboks til rutenettet, av når rutenettet er av) gjør at et klikk i
+  kartet smetter til nærmeste rutenettpunkt og tegner en stråle fra hver
+  utedel dit — blå/heltrukket ved fri sikt, rød/stiplet der en husrekke
+  skjermer (−10 dB), pluss en tabell med avstand, vinkel og nivå per utedel
+  og totalen. Underboksen «Vis rutenett-linjer» gjør prøvepunktene svakt
+  synlige i kartet. Regnelogikken kommer fra kjernen
+  (`Lyd.Felt.punktBidragForklart`, eksporten `acoustics_forklarPunkt`) —
+  samme tall som rutenettet viser, bare brutt ned per kilde i stedet for
+  kollapset til én sum.
 - **Lagre / last oppsett**: «Lagre til fil» laster ned hele tilstanden som en
   menneskelesbar JSON-fil i nedlastingsmappa — lydkilde, valgte soner,
   standardretning, karttype, alle utedeler (plassering + vinkel), rutenettets

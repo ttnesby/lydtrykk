@@ -26,6 +26,7 @@ common options
       "-optl-Wl,--export=acoustics_gridStripePerKilde"
       "-optl-Wl,--export=acoustics_gridStripeSkjermetPerKilde"
       "-optl-Wl,--export=acoustics_fasadeVerstPerKilde"
+      "-optl-Wl,--export=acoustics_forklarPunkt"
     cpp-options:
       -DWASM
     build-depends:
