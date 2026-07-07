@@ -114,6 +114,11 @@
   }
   /* dB-etikett på verste fasadepunkt per husrekke */
   .fasadetip{ font-size:11px; font-weight:600; padding:1px 5px; }
+  /* «forklar celle»: stråle-etiketter og tallpanelet */
+  .forklartip{ font-size:11px; font-weight:600; padding:1px 5px; }
+  .forklartabell{ width:100%; border-collapse:collapse; font-size:11px; margin-top:6px; }
+  .forklartabell th, .forklartabell td{ padding:3px 4px; text-align:right; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  .forklartabell th:first-child, .forklartabell td:first-child{ text-align:left; }
 </style>
 </head>
 <body>
@@ -194,8 +199,16 @@
         <label class="fl" for="gridres">Oppløsning (m)</label>
         <input type="number" id="gridres" min="0.5" max="5" step="0.5" value="2">
       </div>
+      <div class="felt">
+        <label class="ck"><input type="checkbox" id="forklarOn"> Forklar celle (klikk viser stråler fra hver pumpe)</label>
+      </div>
+      <div class="felt" style="margin-left:22px">
+        <label class="ck"><input type="checkbox" id="forklarGrid" checked> Vis rutenett-linjer</label>
+      </div>
       <p class="note" id="gridinfo"></p>
+      <div id="forklarPanel"></div>
       <p class="note">De to blå hjørnene i kartet setter rutenettets område (nedre venstre / øvre høyre) – dra dem dit du vil dekke. Kumulativt lydnivå for hver rute regnes i bakgrunnen (en pool av Web Workers, én WASM-instans hver) og oppdateres automatisk når du flytter en utedel, endrer lydkilde eller drar et hjørne. Avslått viser kartet i stedet hver utedels egen halvbue.</p>
+      <p class="note">«Forklar celle» smetter klikket til nærmeste rutenettpunkt og tegner en stråle fra hver utedel dit – blå/heltrukket for fri sikt, rød/stiplet der en husrekke skjermer (−10 dB). Tabellen under viser avstand, vinkel og nivå per utedel, samt totalen. «Vis rutenett-linjer» gjør prøvepunktene litt synlige i kartet.</p>
     </div>
 
     <div class="grp">
@@ -668,6 +681,8 @@ function setGridOn(on){
   gridOn=on;
   document.getElementById('gridOn').checked=on;
   document.getElementById('gridres').disabled=!on;
+  document.getElementById('forklarOn').disabled=!on;
+  document.getElementById('forklarGrid').disabled=!on;
   if(on){
     if(!map.hasLayer(swMarker)) swMarker.addTo(map);
     if(!map.hasLayer(neMarker)) neMarker.addTo(map);
@@ -678,6 +693,9 @@ function setGridOn(on){
     if(map.hasLayer(neMarker)) map.removeLayer(neMarker);
     if(fyllLayer){ map.removeLayer(fyllLayer); fyllLayer=null; }
     Object.values(contourLayers).forEach(l=>map.removeLayer(l)); contourLayers={};
+    document.getElementById('forklarOn').checked=false;
+    ryddForklaring();
+    if(forklarGridLayer){ map.removeLayer(forklarGridLayer); forklarGridLayer=null; }
     document.getElementById('gridinfo').textContent='Rutenett avslått.';
     pumps.forEach(drawPump);
   }
@@ -709,8 +727,10 @@ function gjenoppbyggPool(reqId){
 
 // Hver pumpe med sitt effektive nivå ('nivaa') – workerne/kjernen regner
 // per-kilde, så lokale verdier slår inn i rutenettet og fasadepunktene.
+// 'num' tas med for «forklar celle»-panelets pumpe-etiketter (ubrukt av
+// worker/fasade-forbrukerne, men harmløst å sende med).
 function pumpsLocal(origin){
-  return pumps.map(p=>({ ...toLocal(p.latlng,origin), brg:p.brg, nivaa:effLevel(p) }));
+  return pumps.map(p=>({ ...toLocal(p.latlng,origin), brg:p.brg, nivaa:effLevel(p), num:p.num }));
 }
 // Husrekkene i rutenettets lokale plan, flatt for WASM-kallet: alle hjørnene
 // som [x0,y0,x1,…] pluss antall hjørner per polygon (grensene i den flate
@@ -728,6 +748,102 @@ function husPolysLocal(origin){
   });
   return { xy:new Float64Array(xy), antall:new Float64Array(antall) };
 }
+
+// ---- forklar celle (stråler fra hver pumpe til et klikket rutenettpunkt) ----
+// Pedagogisk visning av selve regnestykket bak én celle, ikke bare
+// sluttresultatet: hvert kildebidrag (avstand/vinkel/nivå, og om siktlinja
+// er brutt av en husrekke) kommer fra Lyd.Felt.punktBidragForklart via
+// acoustics_forklarPunkt – ingen egen regnelogikk her. Klikket smettes til
+// nærmeste rutenettpunkt, så forklaringen alltid gjelder en celle rutenettet
+// faktisk har beregnet (samme SV-origo som pumpsLocal/husPolysLocal).
+let forklarLayers=[], forklarGridLayer=null, forklarVarslet=false;
+function narmesteRutenettpunkt(latlng){
+  if(!lastGrid) return null;
+  const {res,cols,rows,sw}=lastGrid;
+  const l=toLocal(latlng,sw);
+  const col=Math.min(cols-1,Math.max(0,Math.round(l.x/res)));
+  const row=Math.min(rows-1,Math.max(0,Math.round(l.y/res)));
+  return {col,row,x:col*res,y:row*res};
+}
+function ryddForklaring(){
+  forklarLayers.forEach(l=>map.removeLayer(l)); forklarLayers=[];
+  const panel=document.getElementById('forklarPanel'); if(panel) panel.innerHTML='';
+}
+function forklarKlikk(latlng){
+  ryddForklaring();
+  if(!lastGrid){
+    const panel=document.getElementById('forklarPanel');
+    if(panel) panel.innerHTML='<p class="note">Vent til rutenettet er ferdig beregnet.</p>';
+    return;
+  }
+  const snap=narmesteRutenettpunkt(latlng);
+  if(!snap || !WASM || !pumps.length) return;
+  if(typeof WASM.acoustics_forklarPunkt!=='function'){
+    if(!forklarVarslet){ forklarVarslet=true;
+      console.warn('Forklar celle krever en nyere beregningskjerne (acoustics_forklarPunkt mangler) – bygg lokalt eller bruk PR-previewen.'); }
+    return;
+  }
+  const origin=lastGrid.sw;
+  const pl=pumpsLocal(origin);
+  const xybn=new Float64Array(pl.length*4);
+  pl.forEach((p,i)=>{ xybn[i*4]=p.x; xybn[i*4+1]=p.y; xybn[i*4+2]=p.brg; xybn[i*4+3]=p.nivaa; });
+  const polys=husPolysLocal(origin) || {xy:new Float64Array(0), antall:new Float64Array(0)};
+  const ut=new Float64Array(pl.length*4);
+  WASM.acoustics_forklarPunkt(snap.x, snap.y, xybn, polys.xy, polys.antall, ut);
+  const maskert=isNaN(lastGrid.grid[snap.row*lastGrid.cols+snap.col]);
+  tegnForklaring(snap, origin, pl, ut, maskert);
+}
+// Stiplet/rødlig stråle der skjermingen faktisk trekker fra (samme
+// dashArray-språk som konturenes B+-stipling) – husrekkene er allerede
+// tegnet på kartet, så «hvilket polygon» trengs ikke fra kjernen, det ses
+// direkte av hvilken rekke strålen krysser.
+function tegnForklaring(snap, origin, pl, ut, maskert){
+  const pt=fromLocal(snap.x, snap.y, origin);
+  const skjermVis=document.getElementById('husSkjerm').checked;
+  pl.forEach((p,i)=>{
+    const avstand=ut[i*4], vinkel=ut[i*4+1], uskj=ut[i*4+2], etter=ut[i*4+3];
+    const nivaa=skjermVis?etter:uskj;
+    const erSkjermet=skjermVis && (uskj-etter)>0.01;
+    const from=fromLocal(p.x, p.y, origin);
+    forklarLayers.push(L.polyline([from, pt], {
+      color:erSkjermet?'#b83a3a':'#1d6fb8', weight:2, dashArray:erSkjermet?'8 6':null, interactive:false,
+    }).bindTooltip(`${nivaa.toFixed(1).replace('.',',')} dB(A) · ${avstand.toFixed(1)} m · ${vinkel.toFixed(0)}°`,
+      {sticky:true, className:'forklartip'}).addTo(map));
+  });
+  forklarLayers.push(L.circleMarker(pt,
+    {radius:5,color:'#23231f',weight:2,fillColor:'#fff',fillOpacity:1,interactive:false}).addTo(map));
+  visForklarPanel(pl, ut, skjermVis, maskert);
+}
+function visForklarPanel(pl, ut, skjermVis, maskert){
+  const el=document.getElementById('forklarPanel'); if(!el) return;
+  const rader=pl.map((p,i)=>{
+    const a=ut[i*4], v=ut[i*4+1], u=ut[i*4+2], e=ut[i*4+3];
+    return `<tr><td>#${p.num}</td><td>${a.toFixed(1)} m</td><td>${v.toFixed(0)}°</td><td>${u.toFixed(1)}</td><td>${e.toFixed(1)}</td></tr>`;
+  }).join('');
+  // total via kjernens egen loggsum (acoustics_dbSum) – ingen egen
+  // loggsum-logikk her
+  const total=WASM.acoustics_dbSum(new Float64Array(pl.map((_,i)=>skjermVis?ut[i*4+3]:ut[i*4+2])));
+  let html=`<table class="forklartabell"><thead><tr><th>Pumpe</th><th>Avstand</th><th>Vinkel</th><th>Uskjermet</th><th>Etter skjerming</th></tr></thead><tbody>${rader}</tbody></table>
+    <p><b>Totalt: ${total.toFixed(1)} dB(A)</b></p>`;
+  if(maskert) html+='<p class="note">Dette punktet ligger inne i en husrekke – i det ekte rutenettet er cellen maskert (regnes ikke), siden grenseverdiene gjelder utendørs. Strålene vises likevel, som forklaring.</p>';
+  el.innerHTML=html;
+}
+// Rutenettet gjort «litt synlig»: tynne linjer per rad/kolonne-grense i et
+// offscreen canvas, samme teknikk som renderFyll – ikke ett DOM-element per
+// prøvepunkt, som ville vært uholdbart ved hundretusenvis av celler.
+function renderForklarGrid(g){
+  if(forklarGridLayer){ map.removeLayer(forklarGridLayer); forklarGridLayer=null; }
+  if(!g || !document.getElementById('forklarOn').checked || !document.getElementById('forklarGrid').checked) return;
+  const {rows,cols,sw,res}=g;
+  const canvas=document.createElement('canvas'); canvas.width=cols; canvas.height=rows;
+  const ctx=canvas.getContext('2d');
+  ctx.strokeStyle='rgba(35,35,31,0.35)'; ctx.lineWidth=1;
+  for(let c=0;c<cols;c++){ ctx.beginPath(); ctx.moveTo(c+.5,0); ctx.lineTo(c+.5,rows); ctx.stroke(); }
+  for(let r=0;r<rows;r++){ ctx.beginPath(); ctx.moveTo(0,r+.5); ctx.lineTo(cols,r+.5); ctx.stroke(); }
+  const ne=fromLocal((cols-1)*res,(rows-1)*res,sw);
+  forklarGridLayer=L.imageOverlay(canvas.toDataURL(), [[sw.lat,sw.lng],[ne.lat,ne.lng]], {interactive:false}).addTo(map);
+}
+
 let gridReqSeq=0;
 
 // Fremdrift for runden som pågår: en stripe-teller i gridinfo-linja, og – på
@@ -885,6 +1001,7 @@ async function recomputeGrid(){
   lastGrid={grid:utfall.grid,rows,cols,res,sw};
   renderFyll(lastGrid);
   renderContours(lastGrid);
+  renderForklarGrid(lastGrid);
   if(utfall.uskjermet){
     const el=document.getElementById('gridinfo');
     if(el) el.textContent+=' · kjernen mangler skjerming-eksporten (eldre binær) – regnet uten husskjerming (konservativt)';
@@ -1015,7 +1132,10 @@ function renderLeg(){
 }
 
 // ---- events ----
-map.on('click',e=>{ addPump(e.latlng); });
+map.on('click',e=>{
+  if(gridOn && document.getElementById('forklarOn').checked){ forklarKlikk(e.latlng); return; }
+  addPump(e.latlng);
+});
 ['lyd','vegg','kab'].forEach(id=>{ const e=document.getElementById(id); e.addEventListener('input',redrawAll); e.addEventListener('change',redrawAll); });
 const dd=document.getElementById('defdir'); dd.addEventListener('input',()=>document.getElementById('defdirv').textContent=dd.value+'°');
 const gridresEl=document.getElementById('gridres');
@@ -1026,6 +1146,11 @@ gridresEl.addEventListener('change',()=>{
   scheduleGrid();
 });
 document.getElementById('gridOn').addEventListener('change',e=>setGridOn(e.target.checked));
+document.getElementById('forklarOn').addEventListener('change',e=>{
+  if(!e.target.checked) ryddForklaring();
+  renderForklarGrid(lastGrid);
+});
+document.getElementById('forklarGrid').addEventListener('change',()=>renderForklarGrid(lastGrid));
 document.getElementById('clear').addEventListener('click',()=>{
   [...pumps].forEach(p=>removePump(p.id));
   pumpNo=0; sel=null; positionControls(); renderValgt(); updateCounts();
@@ -1046,6 +1171,8 @@ function snapshot(){
       husOn:document.getElementById('husOn').checked,
       husSkjerm:document.getElementById('husSkjerm').checked,
       husVerst:document.getElementById('husVerst').checked,
+      forklarOn:document.getElementById('forklarOn').checked,
+      forklarGrid:document.getElementById('forklarGrid').checked,
     },
     // 'lokal' bare når utedelen har egne verdier (additivt felt – eldre
     // filer/lesere er upåvirket, ingen versjonsbump)
@@ -1077,6 +1204,8 @@ function restore(d){
   if(opp.husOn!=null) document.getElementById('husOn').checked=opp.husOn;
   if(opp.husSkjerm!=null) document.getElementById('husSkjerm').checked=opp.husSkjerm;
   if(opp.husVerst!=null) document.getElementById('husVerst').checked=opp.husVerst;
+  if(opp.forklarOn!=null) document.getElementById('forklarOn').checked=opp.forklarOn;
+  if(opp.forklarGrid!=null) document.getElementById('forklarGrid').checked=opp.forklarGrid;
   husEndret();   // synk underboksenes deaktivert-tilstand + tegning med lastet fil
   opp.pumps.forEach(p=>{ addPump(L.latLng(p.lat,p.lng),p.brg,p.num,p.lokal); });
   pumpNo=pumps.reduce((m,p)=>Math.max(m,p.num),0);
