@@ -777,10 +777,16 @@ function forklarKlikk(latlng){
     return;
   }
   const snap=narmesteRutenettpunkt(latlng);
-  if(!snap || !WASM || !pumps.length) return;
+  if(!snap || !WASM) return;
+  const panel=document.getElementById('forklarPanel');
+  if(!pumps.length){
+    if(panel) panel.innerHTML='<p class="note">Ingen utedeler plassert ennå.</p>';
+    return;
+  }
   if(typeof WASM.acoustics_forklarPunkt!=='function'){
     if(!forklarVarslet){ forklarVarslet=true;
       console.warn('Forklar celle krever en nyere beregningskjerne (acoustics_forklarPunkt mangler) – bygg lokalt eller bruk PR-previewen.'); }
+    if(panel) panel.innerHTML='<p class="note">«Forklar celle» krever en nyere beregningskjerne enn den som er lastet nå (<code>acoustics_forklarPunkt</code> mangler i <code>app.wasm</code>) – bygg lokalt (<code>./build.sh</code>) eller vent til endringen er deployet/PR-previewen er klar.</p>';
     return;
   }
   const origin=lastGrid.sw;
@@ -828,18 +834,25 @@ function visForklarPanel(pl, ut, skjermVis, maskert){
   if(maskert) html+='<p class="note">Dette punktet ligger inne i en husrekke – i det ekte rutenettet er cellen maskert (regnes ikke), siden grenseverdiene gjelder utendørs. Strålene vises likevel, som forklaring.</p>';
   el.innerHTML=html;
 }
-// Rutenettet gjort «litt synlig»: tynne linjer per rad/kolonne-grense i et
-// offscreen canvas, samme teknikk som renderFyll – ikke ett DOM-element per
-// prøvepunkt, som ville vært uholdbart ved hundretusenvis av celler.
+// Rutenettet gjort «litt synlig»: tynne linjer i et offscreen canvas, samme
+// teknikk som renderFyll – ikke ett DOM-element per prøvepunkt, som ville
+// vært uholdbart ved hundretusenvis av celler. Canvaset er kun cols×rows
+// piksler (én piksel per celle, som renderFyll), så en linje per
+// celle-grense ville malt HELE flaten (hver "linje" er da selve pikselen) –
+// derfor et linje-steg som gir et fast, håndterbart antall linjer per akse
+// uansett rutenettstørrelse, med synlige mellomrom mellom dem.
+const FORKLAR_GRID_MAKS_LINJER=25;
 function renderForklarGrid(g){
   if(forklarGridLayer){ map.removeLayer(forklarGridLayer); forklarGridLayer=null; }
   if(!g || !document.getElementById('forklarOn').checked || !document.getElementById('forklarGrid').checked) return;
   const {rows,cols,sw,res}=g;
   const canvas=document.createElement('canvas'); canvas.width=cols; canvas.height=rows;
   const ctx=canvas.getContext('2d');
-  ctx.strokeStyle='rgba(35,35,31,0.35)'; ctx.lineWidth=1;
-  for(let c=0;c<cols;c++){ ctx.beginPath(); ctx.moveTo(c+.5,0); ctx.lineTo(c+.5,rows); ctx.stroke(); }
-  for(let r=0;r<rows;r++){ ctx.beginPath(); ctx.moveTo(0,r+.5); ctx.lineTo(cols,r+.5); ctx.stroke(); }
+  ctx.strokeStyle='rgba(35,35,31,0.45)'; ctx.lineWidth=1;
+  const colSteg=Math.max(1,Math.round(cols/FORKLAR_GRID_MAKS_LINJER));
+  const radSteg=Math.max(1,Math.round(rows/FORKLAR_GRID_MAKS_LINJER));
+  for(let c=0;c<=cols;c+=colSteg){ ctx.beginPath(); ctx.moveTo(c+.5,0); ctx.lineTo(c+.5,rows); ctx.stroke(); }
+  for(let r=0;r<=rows;r+=radSteg){ ctx.beginPath(); ctx.moveTo(0,r+.5); ctx.lineTo(cols,r+.5); ctx.stroke(); }
   const ne=fromLocal((cols-1)*res,(rows-1)*res,sw);
   forklarGridLayer=L.imageOverlay(canvas.toDataURL(), [[sw.lat,sw.lng],[ne.lat,ne.lng]], {interactive:false}).addTo(map);
 }
