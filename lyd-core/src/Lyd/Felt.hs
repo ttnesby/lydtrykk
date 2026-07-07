@@ -176,9 +176,21 @@ segmentKrysserPolygon :: Punkt -> Punkt -> Polygon -> Bool
 segmentKrysserPolygon a b poly = segmentKrysserKanter a b (kanter poly)
 
 -- | Som 'segmentKrysserPolygon', mot en ferdigbygd kantliste
--- (spesifikasjonsstien; de varme stiene bruker 'segmentKrysserKanterV').
+-- (spesifikasjonsstien; den varme stien bruker
+-- 'segmentKrysserKanterVUtenomEgenFasade').
 segmentKrysserKanter :: Punkt -> Punkt -> [(Punkt, Punkt)] -> Bool
 segmentKrysserKanter a b = any (uncurry (segmenterKrysser a b))
+
+-- | Som 'segmentKrysserPolygon', men ignorerer kanter som ligger < 1 m fra
+-- @a@ (kildens posisjon i praksis, se 'kildeFradrag') — kildens EGEN fasade
+-- unntas fra sikttesten, men resten av polygonet (motsatt side av samme
+-- bygningskropp) skjermer fortsatt.
+segmentKrysserPolygonUtenomEgenFasade :: Punkt -> Punkt -> Polygon -> Bool
+segmentKrysserPolygonUtenomEgenFasade a b poly =
+  any fjernKryssing (kanter poly)
+  where
+    fjernKryssing edge@(c, d) =
+      segmenterKrysser a b c d && punktSegmentAvstand a edge >= 1
 
 -- | Er polygonet kildens «eget» hus? En pumpe plassert med kartklikk kan
 -- lande numerisk innenfor (eller helt inntil) fasadepolygonet den står på —
@@ -223,13 +235,12 @@ punktBidrag p@(PlassertKilde (Punkt kx ky) _ kilde) pt@(Punkt x y) =
 -- | Som 'nivaaIPunkt', men med husrekke-polygoner: et punkt inne i et polygon
 -- gir NaN — utendørs grenseverdier gjelder utenfor fasade, så cellen maskeres
 -- og konturalgoritmen bryter der. Ellers får hvert kildebidrag med brutt
--- siktlinje ('segmentKrysserPolygon', minus kildens eget hus via
--- 'egetPolygon') det faste fradraget 'skjermingDb' — aldri null bidrag, for
--- lyd diffrakterer over tak og rundt rekkeender. Polygonene forenkles først
--- med 'forenkletPolygon' — samme forenkling som den varme stien
--- ('rutenettStripeSkjermet'\/'nivaaMedHindre') gjør, så de to stiene er
--- celle for celle identiske. Returnerer dBA som Double siden NaN ikke er et
--- lydnivå.
+-- siktlinje (minus kildens egen fasade, se 'kildeFradrag') det faste
+-- fradraget 'skjermingDb' — aldri null bidrag, for lyd diffrakterer over tak
+-- og rundt rekkeender. Polygonene forenkles først med 'forenkletPolygon' —
+-- samme forenkling som den varme stien ('rutenettStripeSkjermet'\/
+-- 'nivaaMedHindre') gjør, så de to stiene er celle for celle identiske.
+-- Returnerer dBA som Double siden NaN ikke er et lydnivå.
 nivaaIPunktSkjermet :: [PlassertKilde] -> [Polygon] -> Punkt -> Double
 nivaaIPunktSkjermet plasserte polygoner pt
   | any (`punktIPolygon` pt) gyldige = 0 / 0 -- NaN: maskert celle
@@ -244,13 +255,25 @@ nivaaIPunktSkjermet plasserte polygoner pt
 -- | Fradraget (0 eller 'skjermingDb') for én kildes bidrag i et punkt, gitt
 -- (allerede forenklede, ≥3-hjørners) polygoner. Delt av 'nivaaIPunktSkjermet'
 -- og 'punktBidragForklart' — én sannhet om hva som gir skjerming.
+--
+-- En kilde inne i sitt eget polygon (numerisk plassering ved kartklikk) er
+-- helt unntatt fra det polygonet — ellers ville siktlinja til alt krysse
+-- eget hus og gi fradrag overalt. En kilde bare NÆR (< 1 m fra) egen fasade
+-- er derimot kun unntatt for DE SPESIFIKKE kantene den står inntil
+-- ('segmentKrysserPolygonUtenomEgenFasade') — resten av samme bygningskropp
+-- skjermer fortsatt. Uten det siste ville en kilde montret på én fasade av
+-- en lang husrekke aldri bli skjermet av HELE rekka mot punkter på motsatt
+-- side, som underestimerer nivået (stikk i strid med at modellen ellers
+-- aldri skal underestimere, se 'skjermingDb').
 kildeFradrag :: [Polygon] -> Punkt -> PlassertKilde -> Double
 kildeFradrag gyldige pt p
   | any blokkerer gyldige = skjermingDb
   | otherwise = 0
   where
     pos = pkPos p
-    blokkerer poly = not (egetPolygon pos poly) && segmentKrysserPolygon pos pt poly
+    blokkerer poly
+      | punktIPolygon poly pos = False
+      | otherwise = segmentKrysserPolygonUtenomEgenFasade pos pt poly
 
 -- | Forklaring: hvert kildebidrag i et punkt, uskjermet og etter skjerming
 -- ('nivaaIPunktSkjermet' sin per-kilde-logikk, men uten å kollapse til én
@@ -323,8 +346,8 @@ rutenettStripeSkjermet plasserte polygoner stripe =
 
 -- | Polygon med forhåndsberegnede kanter og bounding-boks. Kantene ligger i
 -- en flat, unboxed vektor @(x1, y1, x2, y2)@: de varme testene
--- ('punktIKanterV'\/'segmentKrysserKanterV') går da som stramme løkker uten
--- pekerjaging — listetraverseringen og allokeringen per celle×polygon
+-- ('punktIKanterV'\/'segmentKrysserKanterVUtenomEgenFasade') går da som
+-- stramme løkker uten pekerjaging — listetraverseringen og allokeringen per celle×polygon
 -- dominerte kjøretiden med tett digitaliserte polygoner (59–304 hjørner per
 -- reell husrekke, før forenkling). Boksen er forfilteret som gjør sikttesten
 -- billig når kilde og punkt ligger på samme side av rekka. Polygonet
@@ -356,11 +379,13 @@ lagHindre :: [Polygon] -> [Hinder]
 lagHindre =
   map (tilHinder . forenkletPolygon forenkleToleranseM) . filter ((>= 3) . length)
 
--- | Per kilde: hindrene som ikke er kildens eget hus ('egetPolygon') —
--- regnes én gang, ikke per punkt.
+-- | Per kilde: hindrene der kilden ikke står bokstavelig INNI polygonet —
+-- regnes én gang, ikke per punkt. (Kilder bare nær, men utenfor, egen
+-- fasade beholder hinderet i lista — selve kant-unntaket skjer per kryssing
+-- i 'nivaaMedHindre', se 'segmentKrysserKanterVUtenomEgenFasade'.)
 lagKildeHindre :: [Hinder] -> [PlassertKilde] -> [(PlassertKilde, [Hinder])]
 lagKildeHindre hindre plasserte =
-  [ (p, [h | h <- hindre, not (egetPolygon (pkPos p) (hiPoly h))])
+  [ (p, [h | h <- hindre, not (punktIPolygon (hiPoly h) (pkPos p))])
   | p <- plasserte
   ]
 
@@ -373,10 +398,17 @@ punktIKanterV ks (Punkt x y) = VU.foldl' vend False ks
       | (y1 > y) /= (y2 > y) && x < (x2 - x1) * (y - y1) / (y2 - y1) + x1 = not inne
       | otherwise = inne
 
--- | 'segmentKrysserKanter' mot den flate kantvektoren.
-segmentKrysserKanterV :: Punkt -> Punkt -> VU.Vector (Double, Double, Double, Double) -> Bool
-segmentKrysserKanterV a b =
-  VU.any (\(x1, y1, x2, y2) -> segmenterKrysser a b (Punkt x1 y1) (Punkt x2 y2))
+-- | Den varme (unboxed-vektor) siden av 'segmentKrysserPolygonUtenomEgenFasade'
+-- — samme regnestykke (pinnes av at hot- og spec-stien er celle for celle
+-- identiske), mot 'hiKanter' i stedet for en kantliste.
+segmentKrysserKanterVUtenomEgenFasade ::
+  Punkt -> Punkt -> VU.Vector (Double, Double, Double, Double) -> Bool
+segmentKrysserKanterVUtenomEgenFasade a b =
+  VU.any fjernKryssing
+  where
+    fjernKryssing (x1, y1, x2, y2) =
+      segmenterKrysser a b (Punkt x1 y1) (Punkt x2 y2)
+        && punktSegmentAvstand a (Punkt x1 y1, Punkt x2 y2) >= 1
 
 -- | Den varme stien: samme regnestykke som 'nivaaIPunktSkjermet' (pinnes av
 -- en test), men mot ferdigbygde 'Hinder' — delt mellom rutenettet og
@@ -392,7 +424,7 @@ nivaaMedHindre kildeHindre hindre pt
       let Desibel l = punktBidrag p pt
           blokkert h =
             boksTreffes (pkPos p) pt h
-              && segmentKrysserKanterV (pkPos p) pt (hiKanter h)
+              && segmentKrysserKanterVUtenomEgenFasade (pkPos p) pt (hiKanter h)
           fradrag = if any blokkert hs then skjermingDb else 0
        in acc + 10 ** ((l - fradrag) / 10)
 

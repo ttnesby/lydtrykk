@@ -97,9 +97,20 @@ shielding model (`rutenettStripeSkjermet`/`nivaaIPunktSkjermet`, exposed as
 whose sight line properly crosses a polygon gets a flat, deliberately
 conservative `skjermingDb` = 10 dB deduction (real rows shield 15–25 dB; the
 margin also covers unmodelled facade reflections). Grazing/touching sight
-lines do NOT shield (conservative near row ends), and a source inside or
-within 1 m of a polygon has that polygon exempted (`egetPolygon` — a pump
-click can land numerically inside its own facade). Polygons are simplified
+lines do NOT shield (conservative near row ends). A source literally inside
+a polygon (a pump click can land numerically inside its own facade) has
+that whole polygon exempted (`punktIPolygon` check in `kildeFradrag`) — but
+a source merely *near* (< 1 m from) its own facade is exempted only for the
+specific edges within that 1 m
+(`segmentKrysserPolygonUtenomEgenFasade`/`segmentKrysserKanterVUtenomEgenFasade`),
+not the whole building: the rest of the same row still shields normally
+against points on its far side. This distinction matters — exempting the
+whole polygon whenever a source is merely near one facade would make an
+entire housing row acoustically transparent for that source, silently
+*underestimating* the level behind it, which is exactly what `skjermingDb`'s
+conservative design is meant to avoid. `egetPolygon` (the older, whole-polygon
+test) is still exported and tested as a general primitive, but no longer
+drives the shielding exemption itself. Polygons are simplified
 before masking/sight tests (`forenkletPolygon`, Douglas–Peucker at
 `forenkleToleranseM` = 0.2 m — well inside the model noise of the flat 10 dB
 deduction; real rows are digitized with 60–300 vertices): both the
@@ -107,7 +118,7 @@ spec path (`nivaaIPunktSkjermet`) and the hot path simplify identically, so
 the cell-for-cell pinning tests stay exact. The hot path
 (`nivaaMedHindre`, shared by the grid and the facade points) runs against
 precomputed `Hinder` values — edges in flat unboxed vectors, bbox prefilter,
-per-source `egetPolygon` exemption — and the stripe functions return a
+per-crossing own-facade exemption — and the stripe functions return a
 Storable vector (contiguous pinned memory) so the wasm side can bulk-copy a
 whole stripe out of linear memory in one FFI crossing. On top of the shielding
 model sits `versteFasadepunkt` (exposed as `acoustics_fasadeVerst`): sample

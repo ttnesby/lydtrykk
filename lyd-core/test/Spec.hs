@@ -455,9 +455,20 @@ skjermTests =
       testCase "eget polygon: kilde inne i veggen skjermes ikke av den" $
         nivaaIPunktSkjermet [pk53 (Punkt 0 0) 180] [vegg] foranVeggen
           @?= dBA (nivaaIPunkt [pk53 (Punkt 0 0) 180] foranVeggen),
-      testCase "eget polygon: kilde < 1 m fra fasaden er også unntatt" $
-        nivaaIPunktSkjermet [pk53 (Punkt 0 1.5) 180] [vegg] foranVeggen
-          @?= dBA (nivaaIPunkt [pk53 (Punkt 0 1.5) 180] foranVeggen),
+      testCase "eget polygon: kilde < 1 m fra fasaden unntas KUN for egen kant, ikke hele bygget" $ do
+        let kildeNaerFasaden = pk53 (Punkt 0 1.5) 180 -- 0,5 m nord for veggens nordkant (y=1)
+        -- samme side som kilden (nord for veggen): ingen falsk selv-skjerming
+        -- fra kanten kilden nesten står inntil
+        nivaaIPunktSkjermet [kildeNaerFasaden] [vegg] (Punkt 0 3)
+          @?= dBA (nivaaIPunkt [kildeNaerFasaden] (Punkt 0 3))
+        -- motsatt side (gjennom hele veggen, sør): skal likevel skjermes —
+        -- «eget hus» er bare den nære fasaden, ikke resten av bygningskroppen
+        assertBool "skjermet ≈ −10 dB tvers gjennom bygget til motsatt side" $
+          abs
+            ( nivaaIPunktSkjermet [kildeNaerFasaden] [vegg] foranVeggen
+                - (dBA (nivaaIPunkt [kildeNaerFasaden] foranVeggen) - skjermingDb)
+            )
+            < 1e-9,
       testCase "punkt inne i et polygon maskeres (NaN)" $
         assertBool "NaN" $
           isNaN (nivaaIPunktSkjermet [bakVeggen] [vegg] (Punkt 0 0)),
