@@ -119,6 +119,9 @@
   .forklartabell{ width:100%; border-collapse:collapse; font-size:11px; margin-top:6px; }
   .forklartabell th, .forklartabell td{ padding:3px 4px; text-align:right; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
   .forklartabell th:first-child, .forklartabell td:first-child{ text-align:left; }
+  /* rutenett-linjene er ett canvas-piksel bredt – uten dette viskes de ut til
+     en jevn gråtone av nettleserens bilineære oppskalering ved innzooming */
+  .forklar-grid-img{ image-rendering:pixelated; }
 </style>
 </head>
 <body>
@@ -841,7 +844,12 @@ function visForklarPanel(pl, ut, skjermVis, maskert){
 // celle-grense ville malt HELE flaten (hver "linje" er da selve pikselen) –
 // derfor et linje-steg som gir et fast, håndterbart antall linjer per akse
 // uansett rutenettstørrelse, med synlige mellomrom mellom dem.
+// Maks-linjer alene kollapset til steg=1 (linje ved HVER celle – tilbake til
+// hele-flaten-buggen) for alle rutenett med ≤ ~37 celler per akse, som er
+// vanlig for mindre tomter ved 2 m oppløsning. Et gulv på steget hindrer det:
+// minst MIN_STEG celler mellom hver linje uansett rutenettstørrelse.
 const FORKLAR_GRID_MAKS_LINJER=25;
+const FORKLAR_GRID_MIN_STEG=4;
 function renderForklarGrid(g){
   if(forklarGridLayer){ map.removeLayer(forklarGridLayer); forklarGridLayer=null; }
   if(!g || !document.getElementById('forklarOn').checked || !document.getElementById('forklarGrid').checked) return;
@@ -849,12 +857,16 @@ function renderForklarGrid(g){
   const canvas=document.createElement('canvas'); canvas.width=cols; canvas.height=rows;
   const ctx=canvas.getContext('2d');
   ctx.strokeStyle='rgba(35,35,31,0.45)'; ctx.lineWidth=1;
-  const colSteg=Math.max(1,Math.round(cols/FORKLAR_GRID_MAKS_LINJER));
-  const radSteg=Math.max(1,Math.round(rows/FORKLAR_GRID_MAKS_LINJER));
+  const colSteg=Math.max(FORKLAR_GRID_MIN_STEG,Math.round(cols/FORKLAR_GRID_MAKS_LINJER));
+  const radSteg=Math.max(FORKLAR_GRID_MIN_STEG,Math.round(rows/FORKLAR_GRID_MAKS_LINJER));
   for(let c=0;c<=cols;c+=colSteg){ ctx.beginPath(); ctx.moveTo(c+.5,0); ctx.lineTo(c+.5,rows); ctx.stroke(); }
   for(let r=0;r<=rows;r+=radSteg){ ctx.beginPath(); ctx.moveTo(0,r+.5); ctx.lineTo(cols,r+.5); ctx.stroke(); }
   const ne=fromLocal((cols-1)*res,(rows-1)*res,sw);
-  forklarGridLayer=L.imageOverlay(canvas.toDataURL(), [[sw.lat,sw.lng],[ne.lat,ne.lng]], {interactive:false}).addTo(map);
+  // 'pixelated' i stedet for nettleserens bilineære oppskalering – ellers
+  // viskes de tynne linjene ut til en jevn gråtone ved innzooming, samme
+  // symptom som steg-buggen (ser ut som en flate i stedet for et gitter).
+  forklarGridLayer=L.imageOverlay(canvas.toDataURL(), [[sw.lat,sw.lng],[ne.lat,ne.lng]],
+    {interactive:false, className:'forklar-grid-img'}).addTo(map);
 }
 
 let gridReqSeq=0;
