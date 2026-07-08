@@ -478,6 +478,15 @@ function pumpVarsel(latlng){
   const l=toLocal(latlng,{lat:CENTER[0],lng:CENTER[1]});
   return husLokalCache.some(poly=>punktIPolygon(l.x,l.y,poly));
 }
+// Toggler varselringen direkte på det eksisterende ikon-elementet i stedet
+// for å bygge et nytt via setIcon(): drawPump() kjøres på hvert dra-frame
+// (scheduleDraw), og setIcon() der rebygger markørens DOM/Draggable midt i
+// et pågående dra – Leaflet mister da musesporingen stille (markøren slutter
+// å følge pekeren, uten feilmelding). Ren klasse-toggle rører ikke Draggable.
+function oppdaterVarselRing(p){
+  const el=p.marker.getElement(), wrap=el&&el.querySelector('.pwrap');
+  if(wrap) wrap.classList.toggle('pvarsel',pumpVarsel(p.latlng));
+}
 
 // ---- valg + kart-kontroller (vinkelhåndtak + søppeltønne) ----
 const dialArm=L.polyline([],{color:'#23231f',weight:1.5,dashArray:'3 3'});
@@ -553,7 +562,7 @@ function addPump(latlng,brg,num,lokal){
 // rutenettet på ville de bare vært clutter oppå det samlede bildet, og
 // ekvidistansen for én enkelt kilde er uansett identisk med dens egen halvbue.
 function drawPump(p){
-  p.marker.setIcon(arrowIcon(p.brg,p.num,!!p.lokal,pumpVarsel(p.latlng)));   // klaringsvarsel, uavhengig av WASM
+  oppdaterVarselRing(p);   // klaringsvarsel, uavhengig av WASM
   if(!WASM) return;   // før bootAkustikk (eller etter feilet boot) finnes ingen kjerne å regne med
   ALLE_GRENSER.forEach(lim=>{
     const z=p.zones[lim];
