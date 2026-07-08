@@ -78,6 +78,8 @@
   .pnum{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:18px; height:18px; border-radius:50%; background:var(--accent); color:#fff; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; border:1.5px solid #fff; box-shadow:0 0 2px rgba(0,0,0,.4); }
   /* utedel med lokale lydkilde-verdier: blått nummer (samme blå som håndtakene) */
   .pnum.pl{ background:#1d6fb8; }
+  /* utedel plassert inni en husrekke (fysisk umulig – feilplassering): stiplet rød ring */
+  .pwrap.pvarsel::after{ content:''; position:absolute; inset:-5px; border-radius:50%; border:2px dashed var(--bad); pointer-events:none; }
   .handleic{ width:15px;height:15px;border-radius:50%;background:#fff;border:2px solid var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.3);cursor:grab; }
   .trashic{ width:24px;height:24px;border-radius:50%;background:#fff;border:2px solid var(--bad);display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.3); }
   /* rutenett-hjørne: liten firkantet håndtak, blå (samme språk som gamle nabopunkter) */
@@ -244,6 +246,7 @@
       <p class="note">Husrekkene tegnes som grå polygoner (fra <code>husrekker/polygoner/</code> på GitHub, EUREF89/UTM 33). Ny rekke = ny JSON-fil pluss én linje i <code>index.json</code> på main – synlig her uten ny deploy.</p>
       <p class="note">«Verste punkt per rekke» prøver punkter langs hver rekkes fasader (1 m utenfor, 1 m mellomrom) og markerer punktet med høyest kumulativt lydnivå – verste punkt ved naboens fasade, direkte mot vedtektsteksten. Markøren farges som den strengeste aktive grensen punktet overskrider (grå = under alle).</p>
       <p class="note">Underboksen styrer om husene også skjermer i beregningen: 10 dB trekkes fra hver utedels bidrag der siktlinja til ruta krysser et hus, og ruter inne i husene regnes ikke (grenseverdiene gjelder utendørs) – ekvidistansene brytes ved fasadene. Uten skjerming – eller med husrekkene helt av – regnes det som om husene ikke fantes; sammenlign gjerne de to for å se effekten.</p>
+      <p class="note">En utedel med stiplet rød ring ligger inni en husrekke – fysisk umulig, og et tegn på at klikket landet på feil side av veggen. Da eksempteres hele rekka fra å skjerme denne utedelen, noe som kan forskyve kumulativtallet og «verste punkt»-markørene. Vanlig nærhet til egen vegg (under 1 m) varsles bevisst ikke – det er normal montering. Flytt utedelen utenfor polygonet for å fjerne varselet.</p>
     </div>
 
     <div class="grp">
@@ -270,7 +273,7 @@
 // Hele appen er én ES-modul: geometri og migrering importeres fra egne,
 // Node-testbare moduler (frontend/test/), og wasm-boot skjer nederst i samme
 // modul (top-level await).
-import { metersPerDeg, toLocal, fromLocal, destPoint, bearing, marchingSquares, boundarySegments } from './gridGeo.js';
+import { metersPerDeg, toLocal, fromLocal, destPoint, bearing, marchingSquares, boundarySegments, punktIPolygon } from './gridGeo.js';
 import { normaliserOppsett } from './migrering.js';
 import { normaliserHusrekke } from './husrekker.js';
 
@@ -444,9 +447,37 @@ function lobePts(p,limit){
 // ---- tilstand ----
 let pumps=[], sel=null, pumpNo=0;   // sel = valgt pumpe-id, eller null
 const HANDLE_M=8;
-// 'lokal' farger nummeret blått – synlig skille på utedeler med egne verdier
-function arrowIcon(brg,num,lokal){ return L.divIcon({className:'',iconSize:[26,26],iconAnchor:[13,13],
-  html:`<div class="pwrap"><span class="ptri" style="transform:translate(-50%,-50%) rotate(${brg}deg)"></span><span class="pnum${lokal?' pl':''}">${num}</span></div>`}); }
+// 'lokal' farger nummeret blått – synlig skille på utedeler med egne verdier.
+// 'varsel' tegner en stiplet rød ring – utedelen ligger inni en husrekke,
+// se pumpVarsel().
+function arrowIcon(brg,num,lokal,varsel){ return L.divIcon({className:'',iconSize:[26,26],iconAnchor:[13,13],
+  html:`<div class="pwrap${varsel?' pvarsel':''}"><span class="ptri" style="transform:translate(-50%,-50%) rotate(${brg}deg)"></span><span class="pnum${lokal?' pl':''}">${num}</span></div>`}); }
+
+// ---- klaring til husrekker ----
+// Husrekkene projisert til det lokale planet (origo = CENTER, samme valg som
+// oppdaterFasadeVerst – vilkårlig, men fast, så cachen ikke må bygges på nytt
+// per pumpe). Bygges av loadHusrekker() når rekkene kommer inn.
+let husLokalCache=null;
+function oppdaterHusLokalCache(){
+  const origin={lat:CENTER[0],lng:CENTER[1]};
+  husLokalCache=husRekker.map(r=>r.punkter.map(pt=>toLocal(pt,origin)));
+}
+// Er 'latlng' bokstavelig inni en husrekke – fysisk umulig for en utedel, og
+// et sikkert tegn på feilplassering (typisk et klikk som landet på feil side
+// av veggen). Bevisst IKKE en generell klaringsgrense (f.eks. < 1 m): i den
+// virkelige verdenen står de aller fleste utedeler tett inntil egen vegg –
+// et prøveoppsett viste at 123 av 136 utedeler lå under 1 m fra en husrekke,
+// mot 21 som lå reelt inni en, så en avstandsgrense hadde varslet på nesten
+// alle og druknet de faktiske feilene. Gated på de samme bryterne som faktisk
+// slår på skjermingsberegningen (husPolysLocal): uten husSkjerm brukes ingen
+// polygoner i regnestykket, så «inni»-status er da irrelevant.
+function pumpVarsel(latlng){
+  if(!husLokalCache || !husLokalCache.length
+     || !document.getElementById('husOn').checked
+     || !document.getElementById('husSkjerm').checked) return false;
+  const l=toLocal(latlng,{lat:CENTER[0],lng:CENTER[1]});
+  return husLokalCache.some(poly=>punktIPolygon(l.x,l.y,poly));
+}
 
 // ---- valg + kart-kontroller (vinkelhåndtak + søppeltønne) ----
 const dialArm=L.polyline([],{color:'#23231f',weight:1.5,dashArray:'3 3'});
@@ -483,7 +514,7 @@ function positionControls(){
 handle.on('drag',()=>{ const p=curPump(); if(!p)return;
   p.brg=Math.round(bearing(p.latlng,handle.getLatLng()));
   dialArm.setLatLngs([p.latlng,handle.getLatLng()]);
-  p.marker.setIcon(arrowIcon(p.brg,p.num,!!p.lokal));
+  p.marker.setIcon(arrowIcon(p.brg,p.num,!!p.lokal,pumpVarsel(p.latlng)));
   const tp=trashPos(p); if(tp) trash.setLatLng(tp);   // tønna følger med (bak tallet)
   scheduleDraw(p);
 });
@@ -510,7 +541,7 @@ function addPump(latlng,brg,num,lokal){
   if(brg==null) brg=parseInt(document.getElementById('defdir').value,10);
   if(num==null) num=++pumpNo;
   if(lokal==null) lokal=null;
-  const m=L.marker(latlng,{icon:arrowIcon(brg,num,!!lokal),draggable:true}).addTo(map);
+  const m=L.marker(latlng,{icon:arrowIcon(brg,num,!!lokal,pumpVarsel(latlng)),draggable:true}).addTo(map);
   const zones={}; ALLE_GRENSER.forEach(lim=>{ zones[lim]=L.polygon([],{color:heat(lim),weight:1.5,fillColor:heat(lim),fillOpacity:.10}); });
   const p={id:num,num:num,marker:m,zones:zones,latlng:latlng,brg:brg,lokal:lokal};
   m.on('click',e=>{L.DomEvent.stop(e);selectPump(p.id);});
@@ -522,6 +553,7 @@ function addPump(latlng,brg,num,lokal){
 // rutenettet på ville de bare vært clutter oppå det samlede bildet, og
 // ekvidistansen for én enkelt kilde er uansett identisk med dens egen halvbue.
 function drawPump(p){
+  p.marker.setIcon(arrowIcon(p.brg,p.num,!!p.lokal,pumpVarsel(p.latlng)));   // klaringsvarsel, uavhengig av WASM
   if(!WASM) return;   // før bootAkustikk (eller etter feilet boot) finnes ingen kjerne å regne med
   ALLE_GRENSER.forEach(lim=>{
     const z=p.zones[lim];
@@ -570,7 +602,6 @@ function visValgtEff(p){
 document.getElementById('plokal').addEventListener('change',e=>{
   const p=curPump(); if(!p) return;
   p.lokal=e.target.checked ? globaleVerdier() : null;
-  p.marker.setIcon(arrowIcon(p.brg,p.num,!!p.lokal));
   renderValgt(); drawPump(p); scheduleGrid();
 });
 ['plyd','pvegg','pkab'].forEach(id=>{
@@ -1351,7 +1382,9 @@ async function loadHusrekker(){
       get(base+f).then(normaliserHusrekke)
         .catch(e=>{ console.warn(`Husrekka ${f} hoppes over:`,e); return null; })));
     husRekker=rekker.filter(Boolean);
+    oppdaterHusLokalCache();
     tegnHusrekker();
+    pumps.forEach(drawPump);   // rekkene kom asynkront – klaringsvarsel kan nå slå inn
     scheduleGrid();   // rekkene kom asynkront – regn rutenettet på nytt med skjerming
     return;
   }
@@ -1424,11 +1457,12 @@ function husEndret(){
   document.getElementById('husSkjerm').disabled=av;
   document.getElementById('husVerst').disabled=av;
   tegnHusrekker();
+  pumps.forEach(drawPump);   // klaringsvarselet er gated på husOn/husSkjerm
   scheduleGrid();
 }
 document.getElementById('husOn').addEventListener('change',husEndret);
 // scheduleGrid-løkka oppdaterer også fasadepunktene, se runGridLoop
-document.getElementById('husSkjerm').addEventListener('change',()=>scheduleGrid());
+document.getElementById('husSkjerm').addEventListener('change',()=>{ pumps.forEach(drawPump); scheduleGrid(); });
 document.getElementById('husVerst').addEventListener('change',()=>scheduleGrid());
 loadHusrekker();
 

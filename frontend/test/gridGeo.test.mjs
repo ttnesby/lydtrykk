@@ -2,7 +2,7 @@
 // Kjøres med Node sin innebygde testrunner: `node --test frontend/test`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { metersPerDeg, toLocal, fromLocal, destPoint, bearing, marchingSquares, boundarySegments } from '../static/gridGeo.js';
+import { metersPerDeg, toLocal, fromLocal, destPoint, bearing, marchingSquares, boundarySegments, punktIPolygon } from '../static/gridGeo.js';
 
 const ORIGO = { lat: 59.65, lng: 10.809 };   // samme strøk som CENTER i kartet
 
@@ -179,4 +179,18 @@ test('boundarySegments: kantpunktene møter marching squares-konturen', () => {
   for (const p of msEnder) {
     assert.ok(punkt(kant).includes(p), `kantsegmentene mangler konturens endepunkt ${p}`);
   }
+});
+
+// punktIPolygon-tester: klaringsvarselet for utedeler inni en husrekke
+// (lydnivakart.html) hviler på denne.
+
+const KVADRAT = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
+
+test('punktIPolygon: punkt inni og utenfor et kvadrat', () => {
+  assert.equal(punktIPolygon(5, 5, KVADRAT), true);
+  assert.equal(punktIPolygon(15, 5, KVADRAT), false);
+});
+
+test('punktIPolygon: punkt like utenfor en kant er utenfor', () => {
+  assert.equal(punktIPolygon(5, -0.5, KVADRAT), false);
 });
