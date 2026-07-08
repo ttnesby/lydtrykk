@@ -631,6 +631,7 @@ function visValgtEff(p){
 document.getElementById('plokal').addEventListener('change',e=>{
   const p=curPump(); if(!p) return;
   p.lokal=e.target.checked ? globaleVerdier() : null;
+  p.marker.setIcon(arrowIcon(p.brg,p.num,!!p.lokal,pumpVarsel(p.latlng)));
   renderValgt(); drawPump(p); scheduleGrid();
 });
 ['plyd','pvegg','pkab'].forEach(id=>{
