@@ -18,6 +18,8 @@ module Lyd.Felt
     skjermingDb,
     forenkleToleranseM,
     forenkletPolygon,
+    gyldigeHusrekker,
+    kildeInniHusrekke,
 
     -- * Fasadepunkter (verste punkt per husrekke)
     fasadeOffsetM,
@@ -133,6 +135,19 @@ forenkletPolygon tol poly
             | (i, p) <- zip [(1 :: Int) ..] (init (drop 1 ps))
             ]
 
+-- | Polygonene forenklet og filtrert til minst 3 hjørner – felles forbehandling
+-- delt av alle funksjoner som gjør maskerings-/skjermingstester mot husrekker.
+gyldigeHusrekker :: [Polygon] -> [Polygon]
+gyldigeHusrekker = map (forenkletPolygon forenkleToleranseM) . filter ((>= 3) . length)
+
+-- | Er punktet inni en av husrekkene, etter samme forenkling som
+-- kildeFradrag bruker for sitt eget-hus-unntak (punktIPolygon poly pos per
+-- polygon)? Eksponeres til kart-simulatoren slik at klaringsvarselet for
+-- feilplasserte utedeler matcher modellens egen eksempsjonsbeslutning, ikke
+-- bare det rå (tegnede) polygonet.
+kildeInniHusrekke :: [Polygon] -> Punkt -> Bool
+kildeInniHusrekke polygoner pos = any (`punktIPolygon` pos) (gyldigeHusrekker polygoner)
+
 -- | Kantene i polygonet, siste hjørne koblet tilbake til første.
 kanter :: Polygon -> [(Punkt, Punkt)]
 kanter ps = zip ps (drop 1 ps ++ take 1 ps)
@@ -246,8 +261,7 @@ nivaaIPunktSkjermet plasserte polygoner pt
   | any (`punktIPolygon` pt) gyldige = 0 / 0 -- NaN: maskert celle
   | otherwise = dBA (kumulativ [skjermetBidrag p | p <- plasserte])
   where
-    gyldige =
-      map (forenkletPolygon forenkleToleranseM) (filter ((>= 3) . length) polygoner)
+    gyldige = gyldigeHusrekker polygoner
     skjermetBidrag p =
       let Desibel l = punktBidrag p pt
        in Desibel (l - kildeFradrag gyldige pt p)
@@ -300,8 +314,7 @@ punktBidragForklart plasserte polygoner pt =
           Desibel uskjermet = punktBidrag p pt
   ]
   where
-    gyldige =
-      map (forenkletPolygon forenkleToleranseM) (filter ((>= 3) . length) polygoner)
+    gyldige = gyldigeHusrekker polygoner
 
 -- | En rad-stripe av rutenettet: radene [radStart, radSlutt) over
 -- 'stKolonner' kolonner med kvadratiske celler på 'stCelleM'. Celle
@@ -376,8 +389,7 @@ tilHinder poly =
 -- spesifikasjonsstien 'nivaaIPunktSkjermet' gjør), og forhåndsberegn
 -- kantvektor + bounding-boks.
 lagHindre :: [Polygon] -> [Hinder]
-lagHindre =
-  map (tilHinder . forenkletPolygon forenkleToleranseM) . filter ((>= 3) . length)
+lagHindre = map tilHinder . gyldigeHusrekker
 
 -- | Per kilde: hindrene der kilden ikke står bokstavelig INNI polygonet —
 -- regnes én gang, ikke per punkt. (Kilder bare nær, men utenfor, egen

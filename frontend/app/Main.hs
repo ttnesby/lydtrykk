@@ -127,6 +127,14 @@ foreign export javascript "acoustics_fasadeVerstPerKilde sync"
 foreign export javascript "acoustics_forklarPunkt sync"
   js_forklarPunkt :: Double -> Double -> JSVal -> JSVal -> JSVal -> JSVal -> IO ()
 
+-- Klaringsvarselet i kart-simulatoren (rød ring på en utedel plassert inni
+-- en husrekke, lydnivakart.html): tidligere testet JS bare det rå (tegnede)
+-- polygonet, som kan være uenig med kildeFradrag sitt faktiske eget-hus-
+-- unntak nær en kant (kildeFradrag tester mot det Douglas-Peucker-
+-- forenklede polygonet). Denne eksporten spør modellen direkte i stedet.
+foreign export javascript "acoustics_kildeInniHusrekke sync"
+  js_kildeInniHusrekke :: Double -> Double -> JSVal -> JSVal -> IO Bool
+
 foreign import javascript unsafe "$1.length" js_arrLen :: JSVal -> Int
 foreign import javascript unsafe "$1[$2]" js_arrAt :: JSVal -> Int -> Double
 
@@ -273,6 +281,17 @@ js_forklarPunkt x y pumperXYBN polyXY polyAntall ut = do
   let bidrag = punktBidragForklart plasserte polygoner (Punkt x y)
       flat (KildeBidrag a v u e) = [a, v, u, e]
   skrivFloat64 ut (VS.fromList (concatMap flat bidrag))
+
+-- | Er punktet (x,y) inni en av husrekkene, etter Haskell-kjernens egen
+-- forenkling (= 'kildeInniHusrekke')? 'Bool' marshales direkte av
+-- wasm32-wasi-ghc sin JSFFI (til JS 0/1) – enklere enn en Int-glue. Brukes
+-- av kart-simulatorens klaringsvarsel, slik at det matcher
+-- 'kildeFradrag' sin eksempsjonsbeslutning presist i stedet for å teste mot
+-- det rå (tegnede) polygonet i JS.
+js_kildeInniHusrekke :: Double -> Double -> JSVal -> JSVal -> IO Bool
+js_kildeInniHusrekke x y polyXY polyAntall = do
+  polygoner <- lesPolygoner polyXY polyAntall
+  pure (kildeInniHusrekke polygoner (Punkt x y))
 
 -- | Polygonene fra flat hjørne-array [x0,y0,x1,y1,…] + antall hjørner per
 -- polygon (grensene mellom polygonene i den flate arrayen). Begge arrayene

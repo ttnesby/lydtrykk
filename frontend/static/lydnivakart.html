@@ -456,11 +456,18 @@ function arrowIcon(brg,num,lokal,varsel){ return L.divIcon({className:'',iconSiz
 // ---- klaring til husrekker ----
 // Husrekkene projisert til det lokale planet (origo = CENTER, samme valg som
 // oppdaterFasadeVerst – vilkårlig, men fast, så cachen ikke må bygges på nytt
-// per pumpe). Bygges av loadHusrekker() når rekkene kommer inn.
-let husLokalCache=null;
+// per pumpe), pluss en flat Float64Array-versjon (samme flating som
+// husPolysLocal, men bygget én gang her i stedet for per rutenett-runde,
+// siden pumpVarsel nå kalles på hvert dra-frame via drawPump). Bygges av
+// loadHusrekker() når rekkene kommer inn.
+let husLokalCache=null, husPolyXYCache=null, husPolyAntallCache=null;
 function oppdaterHusLokalCache(){
   const origin={lat:CENTER[0],lng:CENTER[1]};
   husLokalCache=husRekker.map(r=>r.punkter.map(pt=>toLocal(pt,origin)));
+  const antall=[], xy=[];
+  husLokalCache.forEach(poly=>{ antall.push(poly.length); poly.forEach(p=>{ xy.push(p.x,p.y); }); });
+  husPolyXYCache=new Float64Array(xy);
+  husPolyAntallCache=new Float64Array(antall);
 }
 // Er 'latlng' bokstavelig inni en husrekke – fysisk umulig for en utedel, og
 // et sikkert tegn på feilplassering (typisk et klikk som landet på feil side
@@ -471,11 +478,24 @@ function oppdaterHusLokalCache(){
 // alle og druknet de faktiske feilene. Gated på de samme bryterne som faktisk
 // slår på skjermingsberegningen (husPolysLocal): uten husSkjerm brukes ingen
 // polygoner i regnestykket, så «inni»-status er da irrelevant.
+//
+// Spør kjernens egen acoustics_kildeInniHusrekke når den finnes: den tester
+// mot det Douglas-Peucker-forenklede polygonet kildeFradrag faktisk bruker
+// for sitt eget-hus-unntak, som for en kilde bare noen centimeter fra en
+// kant kan svare annerledes enn det rå (tegnede) polygonet JS ellers ser.
+// Uten eksporten (eldre binær, eller før WASM har bootet) faller varselet
+// tilbake til den rå JS-sjekken – konservativt: samme oppførsel som før.
+let kildeInniVarslet=false;
 function pumpVarsel(latlng){
   if(!husLokalCache || !husLokalCache.length
      || !document.getElementById('husOn').checked
      || !document.getElementById('husSkjerm').checked) return false;
   const l=toLocal(latlng,{lat:CENTER[0],lng:CENTER[1]});
+  if(WASM && typeof WASM.acoustics_kildeInniHusrekke==='function'){
+    return WASM.acoustics_kildeInniHusrekke(l.x,l.y,husPolyXYCache,husPolyAntallCache);
+  }
+  if(WASM && !kildeInniVarslet){ kildeInniVarslet=true;
+    console.warn('Klaringsvarsel: kjernen mangler acoustics_kildeInniHusrekke (eldre binær) – bruker rått polygon i stedet for modellens forenklede eksempsjonsgrense.'); }
   return husLokalCache.some(poly=>punktIPolygon(l.x,l.y,poly));
 }
 // Toggler varselringen direkte på det eksisterende ikon-elementet i stedet

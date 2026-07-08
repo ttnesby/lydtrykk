@@ -469,6 +469,13 @@ skjermTests =
                 - (dBA (nivaaIPunkt [kildeNaerFasaden] foranVeggen) - skjermingDb)
             )
             < 1e-9,
+      testCase "kildeInniHusrekke: enig med kildeFradrag sitt eget-hus-unntak" $
+        kildeInniHusrekke [vegg] (Punkt 0 0) @?= True,
+      testCase "kildeInniHusrekke: rått polygon sier inni, forenklet (0,2 m) sier utenfor" $ do
+        let poly = [Punkt 0 0, Punkt 5 (-0.15), Punkt 10 0, Punkt 10 10, Punkt 0 10]
+            pt = Punkt 5 (-0.05)
+        punktIPolygon poly pt @?= True
+        kildeInniHusrekke [poly] pt @?= False,
       testCase "punkt inne i et polygon maskeres (NaN)" $
         assertBool "NaN" $
           isNaN (nivaaIPunktSkjermet [bakVeggen] [vegg] (Punkt 0 0)),
