@@ -880,17 +880,14 @@ let gridReqSeq=0;
 let framdrift=null;
 function startFramdrift(reqId,rows,cols,res,sw,striper){
   const el=document.getElementById('gridinfo');
-  framdrift={reqId,rows,cols,res,sw,striper,ferdig:0,canvas:null,layerLaget:false,
+  framdrift={reqId,rows,cols,res,sw,striper,ferdig:0,img:null,layerLaget:false,
              baseTekst:el?el.textContent:''};
   if(interacting) return;                 // grovpass under drag: bare telleren
   const aktive=[...activeLimits].sort((x,y)=>x-y);
   if(!aktive.length) return;
   framdrift.aktive=aktive;
   framdrift.rgb=aktive.map(l=>{ const n=parseInt(heat(l).slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; });
-  framdrift.canvas=document.createElement('canvas');
-  framdrift.canvas.width=cols; framdrift.canvas.height=rows;
-  framdrift.ctx=framdrift.canvas.getContext('2d');
-  framdrift.img=framdrift.ctx.createImageData(cols,rows);
+  framdrift.img=new ImageData(cols,rows);   // akkumulerer stripe for stripe; ingen offscreen canvas
 }
 function visFramdrift(){
   const el=document.getElementById('gridinfo'); if(!el||!framdrift||framdrift.feilet) return;
@@ -900,9 +897,10 @@ function stripeFerdig(part){
   if(!framdrift||part.reqId!==framdrift.reqId) return;
   framdrift.ferdig++;
   visFramdrift();
-  if(!framdrift.canvas) return;
-  // mal stripens celler (samme fargelogikk som renderFyll)
-  const {rows,cols,aktive,rgb,img}=framdrift;
+  if(!framdrift.img) return;
+  // mal stripens celler inn i den akkumulerende ImageData-en (samme
+  // fargelogikk som renderFyll)
+  const {rows,cols,aktive,rgb,img,res,sw}=framdrift;
   const stripeRader=part.values.length/cols;
   for(let r=0;r<stripeRader;r++){
     const rad=part.rowStart+r, outRow=rows-1-rad;   // rad 0 = sør, bildets rad 0 = nord
@@ -915,18 +913,13 @@ function stripeFerdig(part){
       img.data[pi]=rgb[i][0]; img.data[pi+1]=rgb[i][1]; img.data[pi+2]=rgb[i][2]; img.data[pi+3]=FYLL_ALPHA;
     }
   }
-  framdrift.ctx.putImageData(img,0,0);
-  const url=framdrift.canvas.toDataURL();
-  if(!framdrift.layerLaget){
-    // første stripe i runden: bytt ut forrige rundes fyll (hjørnene kan ha
-    // flyttet seg, så et nytt overlay med riktige bounds – ikke setUrl alene)
-    if(fyllLayer){ map.removeLayer(fyllLayer); }
-    const ne=fromLocal((cols-1)*framdrift.res,(rows-1)*framdrift.res,framdrift.sw);
-    fyllLayer=L.imageOverlay(url,[[framdrift.sw.lat,framdrift.sw.lng],[ne.lat,ne.lng]],{interactive:false}).addTo(map);
-    framdrift.layerLaget=true;
-  } else {
-    fyllLayer.setUrl(url);
-  }
+  // Blit den akkumulerte forhåndsvisningen via ImageBitmap (ingen toDataURL).
+  // sikreFyllLag flytter laget til rundens hjørner (kan ha endret seg) og
+  // erstatter forrige rundes fyll ved første blit. Deler fyllSeq med
+  // renderFyll, så den avsluttende renderFyll ved rundeslutt alltid vinner.
+  const ne=fromLocal((cols-1)*res,(rows-1)*res,sw);
+  framdrift.layerLaget=true;
+  malFyll(img,sw,ne,++fyllSeq);
 }
 // Rydd fremdriften for runden 'reqId' når den er over. Ved avbrutt runde
 // (timeout/feil) settes infolinja tilbake fra telleren til grunnteksten –
@@ -1050,18 +1043,71 @@ function updateGridInfo(cols,rows,res,coarsened){
 // har den innerste konturens farge. Én farge per celle (ingen akkumulering),
 // og celler under mildeste overskredne grense forblir ufarget, så «stille
 // lommer» inne i et mettet område er synlige som hull i fyllet.
+// Canvas-basert Leaflet-lag: som L.imageOverlay, men tegnes fra en ImageBitmap
+// i stedet for en <img> med URL. Det sparer PNG-encode + base64 (toDataURL) på
+// vei inn OG base64-decode + PNG-inflate på vei ut. For et fint rutenett (opp
+// mot ~328k piksler) er encode-en ~15–40 ms synkront på hovedtråden, og den
+// kjørte per stripe under progressiv maling (×pool-størrelsen per runde).
+// createImageBitmap komprimerer ikke og jobber utenfor hovedtråden; drawImage
+// er en ~sub-ms blit. Arver all posisjonering/zoom-animasjon fra
+// L.ImageOverlay – vi bytter bare ut selve elementet (this._image, et canvas i
+// stedet for en <img>) og hvordan det fylles.
+const FyllOverlay=L.ImageOverlay.extend({
+  _initImage(){
+    const cv=this._image=L.DomUtil.create('canvas');
+    L.DomUtil.addClass(cv,'leaflet-image-layer');
+    if(this._zoomAnimated) L.DomUtil.addClass(cv,'leaflet-zoom-animated');
+    if(this.options.className) L.DomUtil.addClass(cv,this.options.className);
+    cv.onselectstart=L.Util.falseFn;
+    cv.onmousemove=L.Util.falseFn;
+  },
+  // Blit en ImageBitmap inn på lagets canvas. Canvasets indre pikselstørrelse
+  // følger bitmap-en (rutenett-oppløsningen); CSS-størrelsen settes av
+  // L.ImageOverlay._reset til de projiserte skjermpikslene, så nettleseren
+  // skalerer mykt opp akkurat som imageOverlay gjorde.
+  setBitmap(bmp){
+    const cv=this._image; if(!cv) return this;
+    if(cv.width!==bmp.width||cv.height!==bmp.height){ cv.width=bmp.width; cv.height=bmp.height; }
+    const ctx=cv.getContext('2d');
+    ctx.imageSmoothingEnabled=true;
+    ctx.clearRect(0,0,cv.width,cv.height);
+    ctx.drawImage(bmp,0,0);
+    return this;
+  },
+});
+function fyllOverlay(bounds,options){ return new FyllOverlay('',bounds,options); }
+
 let fyllLayer=null;
-const FYLL_ALPHA=45;   // av 255, ~18 % dekkgrad – skal ligge under strekene
+let fyllSeq=0;          // forkaster utdaterte async-bitmaps når en nyere maling har overtatt
+const FYLL_ALPHA=45;    // av 255, ~18 % dekkgrad – skal ligge under strekene
+
+// Sørg for at fyll-laget finnes og dekker [sw,ne] (hjørnene kan ha flyttet seg
+// mellom runder), og ligger på kartet. Gjenbruker canvaset.
+function sikreFyllLag(sw,ne){
+  const bounds=[[sw.lat,sw.lng],[ne.lat,ne.lng]];
+  if(!fyllLayer){ fyllLayer=fyllOverlay(bounds,{interactive:false}).addTo(map); }
+  else { fyllLayer.setBounds(bounds); if(!map.hasLayer(fyllLayer)) fyllLayer.addTo(map); }
+  return fyllLayer;
+}
+// Tegn en ferdig ImageData inn i fyll-laget uten toDataURL: bygg en ImageBitmap
+// (async, utenfor hovedtråden) og blit den. 'seq' dropper kall som en nyere
+// maling har innhentet – createImageBitmap-løftene kan avgjøres i uorden, og
+// den progressive malingen deler teller med renderFyll (se stripeFerdig), så
+// den avsluttende renderFyll ved rundeslutt alltid vinner.
+function malFyll(img,sw,ne,seq){
+  createImageBitmap(img).then(bmp=>{
+    if(seq!==fyllSeq){ if(bmp.close) bmp.close(); return; }
+    sikreFyllLag(sw,ne).setBitmap(bmp);
+    if(bmp.close) bmp.close();   // canvaset har kopiert pikslene; frigi bitmap-minnet
+  }).catch(()=>{});
+}
+
 function renderFyll(g){
   const {grid,rows,cols,sw,res}=g;
-  if(fyllLayer){ map.removeLayer(fyllLayer); fyllLayer=null; }
   const aktive=[...activeLimits].sort((x,y)=>x-y);
-  if(!aktive.length) return;
+  if(!aktive.length){ if(fyllLayer){ map.removeLayer(fyllLayer); fyllLayer=null; } return; }
   const rgb=aktive.map(l=>{ const n=parseInt(heat(l).slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; });
-  const canvas=document.createElement('canvas');
-  canvas.width=cols; canvas.height=rows;
-  const ctx=canvas.getContext('2d');
-  const img=ctx.createImageData(cols,rows);
+  const img=new ImageData(cols,rows);
   for(let row=0; row<rows; row++){
     const outRow=rows-1-row;   // rad 0 i rutenettet = sør; bildets rad 0 = nord (topp)
     for(let col=0; col<cols; col++){
@@ -1073,9 +1119,8 @@ function renderFyll(g){
       img.data[pi]=rgb[i][0]; img.data[pi+1]=rgb[i][1]; img.data[pi+2]=rgb[i][2]; img.data[pi+3]=FYLL_ALPHA;
     }
   }
-  ctx.putImageData(img,0,0);
   const ne=fromLocal((cols-1)*res,(rows-1)*res,sw);
-  fyllLayer=L.imageOverlay(canvas.toDataURL(), [[sw.lat,sw.lng],[ne.lat,ne.lng]], {interactive:false}).addTo(map);
+  malFyll(img,sw,ne,++fyllSeq);
 }
 
 // marchingSquares/boundarySegments importeres fra gridGeo.js; segmentene er i
