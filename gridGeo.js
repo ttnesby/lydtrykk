@@ -35,6 +35,19 @@ export function bearing(from,to){
   return (Math.atan2(y,x)*180/Math.PI+360)%360;
 }
 
+// Er punktet inni polygonet? Partall/oddetall-regel (ray casting). 'polygon'
+// er en liste {x,y}-hjørner, implisitt lukket (siste hjørne kobles til det
+// første). Brukes til å varsle om utedeler plassert inni en husrekke (se
+// klaringsringen i lydnivakart.html).
+export function punktIPolygon(px,py,polygon){
+  let inne=false;
+  for(let i=0,j=polygon.length-1;i<polygon.length;j=i++){
+    const a=polygon[i], b=polygon[j];
+    if(((a.y>py)!==(b.y>py)) && (px<(b.x-a.x)*(py-a.y)/(b.y-a.y)+a.x)) inne=!inne;
+  }
+  return inne;
+}
+
 // Marching squares: konturlinjer der rutenettverdien krysser 'threshold'.
 // Hjørnene i cellen (r,c)–(r+1,c+1) navngis a=NV b=NØ c=SØ d=SV. Sadelpunkt-
 // tilfellene (idx 5 og 10, alle fire kanter kysset) løses ved å sammenligne
