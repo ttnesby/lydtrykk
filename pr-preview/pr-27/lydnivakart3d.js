@@ -28,12 +28,23 @@ const FARGE = { 25: '#dc2626', 28: '#ea580c', 30: '#d97706', 33: '#ca8a04', 35: 
 function heat(limit) { return FARGE[limit] || '#888'; }
 
 // Rene visuelle konstanter for veggenes høyde – ingen fysisk betydning (dB er
-// ikke meter). Stigende med dB gir en trappet form: strengeste/lengst-unna
-// grense lavest, mildeste/nærmest kilden høyest – samme konvensjon som
-// fargeleggingen i 2D (varm = strengest = ytterst).
-const DB_BASISLINJE = 20;
-const DB_TIL_METER = 0.6;
-const VEGG_HALVBREDDE_M = 0.3;
+// ikke meter). Høyden regnes relativt til den *laveste aktive* grensen (ikke
+// en fast dB-basislinje) – det holder den innerste/mildeste veggen i samme
+// størrelsesorden som husrekkenes placeholder-høyde (HUS_HOYDE_M) uansett
+// hvilke grenser som er aktive, i stedet for at f.eks. 45 dB alene ga en 15 m
+// tårnhøy vegg. Stigende med dB gir fortsatt en trappet form: strengeste/
+// lengst-unna grense lavest, mildeste/nærmest kilden høyest – samme
+// konvensjon som fargeleggingen i 2D (varm = strengest = ytterst).
+const VEGG_MIN_HOYDE_M = 0.56;
+const VEGG_TRINN_PER_DB = 0.25;
+// Tynn nok til å lese som et gardin langs konturlinjen, ikke en murvegg som
+// visker ut 3D-følelsen mellom husrekke og veggens forside.
+const VEGG_HALVBREDDE_M = 0.04;
+
+// Samme dekkgrad som FYLL_ALPHA i lydnivakart.html (av 255) – gulvfargen skal
+// se ut som 2D-fyllet (renderFyll), bare tegnet som en georeferert
+// rasterflate i stedet for et Leaflet-canvaslag.
+const GULV_ALPHA = 45;
 
 // Tak på celletall, samme sikkerhetsnett som MAX_CELLS i lydnivakart.html –
 // et veldig stort overført rutenett skal grovnes automatisk, ikke fryse fanen
@@ -189,9 +200,49 @@ function veggerGeoJSON(segments, res, sw) {
   return { type: 'FeatureCollection', features };
 }
 
+// Gulv-fyll: samme fargelogikk som renderFyll() i lydnivakart.html (hver
+// celle får fargen til den *høyeste* aktive grensen den overskrider – ingen
+// akkumulering), men tegnet som en georeferert bilde-kilde (MapLibre 'image'
+// source) i stedet for et Leaflet-canvaslag. Gjør «rommet» mellom gulv og
+// vegger lesbart, akkurat som fyllet gjør i 2D.
+function leggTilGulv(map, opp, resultat) {
+  const { grid, rows, cols, res, sw } = resultat;
+  const aktive = [...opp.limits].sort((a, b) => a - b);
+  if (!aktive.length) return;
+  const rgb = aktive.map(l => { const n = parseInt(heat(l).slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; });
+  const canvas = document.createElement('canvas');
+  canvas.width = cols; canvas.height = rows;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(cols, rows);
+  for (let row = 0; row < rows; row++) {
+    const outRow = rows - 1 - row;   // rad 0 i rutenettet = sør; bildets rad 0 = nord (topp) – samme flipp som renderFyll
+    for (let col = 0; col < cols; col++) {
+      const v = grid[row * cols + col];
+      let i = -1;
+      while (i + 1 < aktive.length && v > aktive[i + 1]) i++;
+      if (i < 0) continue;
+      const pi = (outRow * cols + col) * 4;
+      img.data[pi] = rgb[i][0]; img.data[pi + 1] = rgb[i][1]; img.data[pi + 2] = rgb[i][2]; img.data[pi + 3] = GULV_ALPHA;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const nw = fromLocal(0, (rows - 1) * res, sw);
+  const ne = fromLocal((cols - 1) * res, (rows - 1) * res, sw);
+  const se = fromLocal((cols - 1) * res, 0, sw);
+  const swPt = fromLocal(0, 0, sw);
+  map.addSource('gulv', {
+    type: 'image',
+    url: canvas.toDataURL(),
+    coordinates: [[nw.lng, nw.lat], [ne.lng, ne.lat], [se.lng, se.lat], [swPt.lng, swPt.lat]],
+  });
+  // Legges under husrekkene i lag-rekkefølgen (rent gulv, ikke oppå veggene).
+  map.addLayer({ id: 'gulv', type: 'raster', source: 'gulv' }, map.getLayer('husrekker-3d') ? 'husrekker-3d' : undefined);
+}
+
 function leggTilVegger(map, opp, resultat) {
   const { grid, rows, cols, res, sw } = resultat;
   const aktive = [...opp.limits].sort((a, b) => a - b);
+  const lavest = aktive[0];
   aktive.forEach(lim => {
     const segs = marchingSquares(grid, rows, cols, lim).concat(boundarySegments(grid, rows, cols, lim));
     if (!segs.length) return;
@@ -203,7 +254,7 @@ function leggTilVegger(map, opp, resultat) {
       source: srcId,
       paint: {
         'fill-extrusion-color': heat(lim),
-        'fill-extrusion-height': Math.max(0.5, (lim - DB_BASISLINJE) * DB_TIL_METER),
+        'fill-extrusion-height': VEGG_MIN_HOYDE_M + (lim - lavest) * VEGG_TRINN_PER_DB,
         'fill-extrusion-base': 0,
         'fill-extrusion-opacity': 0.9,
       },
@@ -297,6 +348,7 @@ async function start(opp) {
       melding.textContent = `${opp.pumps.length} utedel(er) overført · ${resultat.feil}`;
       return;
     }
+    leggTilGulv(map, opp, resultat);
     const aktive = leggTilVegger(map, opp, resultat);
     melding.textContent = `${opp.pumps.length} utedel(er) overført`;
     if (resultat.uskjermet) melding.textContent += ' · kjernen mangler skjerming-eksporten (eldre binær) – regnet uten husskjerming (konservativt)';
