@@ -30,20 +30,15 @@ export function utm33TilLatLng(oest,nord){
   return { lat: lat*180/Math.PI, lng: LON0+lon*180/Math.PI };
 }
 
-// Normaliserer ett husrekke-objekt {navn, crs, polygon:[[øst,nord],...]} til
-// {navn, punkter:[{lat,lng},...]}. Kaster med norsk melding ved ukjent
-// koordinatsystem eller for få punkter – aldri stille feil projeksjon.
-// Manglende crs antas å være EPSG:25833. Et (tilnærmet) duplisert sluttpunkt
-// likt startpunktet droppes (dataene lukker polygonet med noen cm avvik);
-// Leaflet lukker polygonet selv.
+// Validerer og konverterer ett rått polygon ([[øst,nord],...], EPSG:25833)
+// til punkter [{lat,lng},...]. Delt av hoved-polygonet og hvert delpolygon i
+// 'tredjeEtasje' (se normaliserHusrekke) – samme regler begge steder: kaster
+// med norsk melding ved for få/ugyldige punkter, aldri stille feil projeksjon.
+// Et (tilnærmet) duplisert sluttpunkt likt startpunktet droppes (dataene
+// lukker polygonet med noen cm avvik); Leaflet/GeoJSON lukker polygonet selv.
 const LUKKE_TOLERANSE_M=0.5;
-export function normaliserHusrekke(obj){
-  if(!obj || !Array.isArray(obj.polygon))
-    throw new Error('Ugyldig husrekke – forventet {navn, crs, polygon: [[øst, nord], ...]}.');
-  const crs=obj.crs ?? 'EPSG:25833';
-  if(crs!=='EPSG:25833')
-    throw new Error(`Ukjent koordinatsystem «${crs}» – forventet EPSG:25833.`);
-  const pkt=obj.polygon.map(p=>{
+function normaliserPolygon(polygon){
+  const pkt=polygon.map(p=>{
     if(!Array.isArray(p)||p.length!==2||!Number.isFinite(p[0])||!Number.isFinite(p[1]))
       throw new Error('Ugyldig punkt i polygonet – forventet [øst, nord] i meter.');
     return p;
@@ -51,5 +46,29 @@ export function normaliserHusrekke(obj){
   if(pkt.length>1 && Math.hypot(pkt[pkt.length-1][0]-pkt[0][0], pkt[pkt.length-1][1]-pkt[0][1])<LUKKE_TOLERANSE_M)
     pkt.pop();
   if(pkt.length<3) throw new Error('Polygonet må ha minst 3 punkter.');
-  return { navn: typeof obj.navn==='string' ? obj.navn : '', punkter: pkt.map(([e,n])=>utm33TilLatLng(e,n)) };
+  return pkt.map(([e,n])=>utm33TilLatLng(e,n));
+}
+
+// Normaliserer ett husrekke-objekt
+// {navn, crs, polygon:[[øst,nord],...], tredjeEtasje?:[[[øst,nord],...],...]}
+// til {navn, punkter:[{lat,lng},...], tredjeEtasje:[[{lat,lng},...],...]}.
+// Manglende crs antas å være EPSG:25833.
+//
+// 'tredjeEtasje' er additivt og valgfritt (kun konsumert av 3D-visningen for
+// en ekstra etasjeboks stablet oppå hoved-polygonets ekstrudering – 2D bruker
+// verken feltet eller navnet på det): mangler feltet helt → [] (ingen ekstra
+// etasje, gamle filer uendret gyldige). Et *tilstedeværende* delpolygon som
+// er ugyldig kaster derimot samme type feil som hoved-polygonet – prinsippet
+// er «aldri stille feil projeksjon», ikke «hopp stille over dårlige data».
+export function normaliserHusrekke(obj){
+  if(!obj || !Array.isArray(obj.polygon))
+    throw new Error('Ugyldig husrekke – forventet {navn, crs, polygon: [[øst, nord], ...]}.');
+  const crs=obj.crs ?? 'EPSG:25833';
+  if(crs!=='EPSG:25833')
+    throw new Error(`Ukjent koordinatsystem «${crs}» – forventet EPSG:25833.`);
+  return {
+    navn: typeof obj.navn==='string' ? obj.navn : '',
+    punkter: normaliserPolygon(obj.polygon),
+    tredjeEtasje: Array.isArray(obj.tredjeEtasje) ? obj.tredjeEtasje.map(normaliserPolygon) : [],
+  };
 }

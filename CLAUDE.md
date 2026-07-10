@@ -7,12 +7,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A static, backend-free web app: a Haskell domain-logic library compiled to
 WebAssembly (via Miso + GHC's wasm32-wasi backend) that answers "how far /
 how loud" questions for a heat-pump outdoor unit against NS 8175 noise
-limits. Two UIs share one WASM binary and one domain module:
+limits. Three UIs share one WASM binary and one domain module:
 
 - `frontend/static/index.html` — the Miso calculator app.
 - `frontend/static/lydnivakart.html` — a Leaflet map simulator that places
   multiple units and computes cumulative/spatial noise, calling into the
   *same* `app.wasm` in "reactor mode" (no `hs_start`, so Miso never mounts).
+- `frontend/static/lydnivakart3d.html` — a read-only MapLibre GL JS 3D
+  companion view reached via a link from the map simulator (see "3D-visning"
+  below), showing the same pumps/husrekker/dB-equidistances from a
+  tiltable/rotatable camera.
 
 All UI text, comments, and commit messages are in Norwegian (bokmål).
 
@@ -207,16 +211,17 @@ that arrive before then), and a worker without a core — or with a binary too
 old to have `acoustics_gridStripe` — replies `{error: true}` so that grid
 round is skipped.
 
-### Runtime dependencies: vendored WASI shim, SRI-pinned Leaflet
+### Runtime dependencies: vendored WASI shim, SRI-pinned Leaflet/MapLibre
 
 The WASI shim (`@bjorn3/browser_wasi_shim@0.3.0` dist files) is vendored in
 `frontend/static/vendor/wasi/` — wasm boot does not depend on jsdelivr being
-up; upgrade by re-downloading the dist files. Leaflet still comes from cdnjs
-but is pinned with SRI `integrity` hashes in `lydnivakart.html`; bumping the
-Leaflet version requires recomputing those hashes
+up; upgrade by re-downloading the dist files. Leaflet and MapLibre GL JS
+(4.7.1, used only by `lydnivakart3d.html`) both still come from cdnjs but are
+pinned with SRI `integrity` hashes in their respective HTML files; bumping
+either version requires recomputing those hashes
 (`curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`).
 
-### Testable JS modules (`gridGeo.js`, `migrering.js`, `husrekker.js`)
+### Testable JS modules (`gridGeo.js`, `migrering.js`, `husrekker.js`, `grid3d.js`)
 
 The map page's main script is one ES module that imports the pure parts from
 node-testable modules (`frontend/test/*.test.mjs`, run in CI before the
@@ -226,7 +231,16 @@ marching squares — returns plain `{lat, lng}` objects, no Leaflet dependency),
 migration that `restore()` applies), and `husrekker.js` (`utm33TilLatLng`,
 an inverse transverse Mercator for EUREF89/UTM zone 33 — EPSG:25833, the CRS
 of the house-row polygons — plus `normaliserHusrekke`, which validates the
-`{navn, crs, polygon}` shape and rejects any other CRS loudly).
+`{navn, crs, polygon}` shape and rejects any other CRS loudly). `grid3d.js` is
+the 3D page's counterpart: `gridDimsFraOppsett` (grid-cell-count math with a
+caller-supplied cap — see "3D-visning" below), `veggerGeoJSON`/
+`husrekkerGeoJSON`/`tredjeEtasjeGeoJSON` (GeoJSON builders for the dB-walls
+and husrekke extrusions), and `pumpsLocal`/`husPolysLocal`/`nivaaAv` (the same
+local-plane pump/husrekke prep `lydnivakart.html` does inline for its own
+grid, extracted here so the 3D page's version is unit-tested too). It is
+deliberately its own module rather than folded into `gridGeo.js` — this is
+3D-page-specific geometry (wall extrusion buffering, a different cell cap),
+not the shared 2D/3D-agnostic primitives `gridGeo.js` holds.
 
 ### `lydnivakart.html`: grid/ekvidistanser feature (the newest, most involved part)
 
@@ -341,7 +355,18 @@ Per-pump local source values are one such additive field: `pumps[].lokal`
 The house rows at Dyst live as one JSON file per row in `husrekker/polygoner/`
 (`{navn, crs: "EPSG:25833", polygon: [[east, north], ...]}`), listed by
 `index.json` in the same directory — adding a row = new file + one line in the
-manifest. The map page loads them at boot (independent of the wasm core) and
+manifest. An optional, additive `tredjeEtasje: [[[east, north], ...], ...]`
+field lists one sub-polygon per contiguous part of the row that has a third
+floor (not every unit does) — validated/converted by the same rules as the
+main `polygon` (`normaliserHusrekke` in `husrekker.js`, throws on a genuinely
+malformed sub-polygon, defaults to `[]` when the field is absent so older
+files stay valid unchanged). It is consumed *only* by `lydnivakart3d.html`
+(see "3D-visning" below) as an extra box stacked on top of the row's base
+extrusion — `lydnivakart.html` reads only `punkter` from the normalised
+result and ignores the field entirely, and the shielding math
+(`husPolysLocal`) still uses only the main `polygon` — height has no bearing
+on the 2D acoustics. The map page loads them at boot (independent of the wasm
+core) and
 draws them as grey, `interactive:false` polygons, toggled by the «Husrekker
 på» master checkbox (which gates the *whole* polygon feature, drawing and
 computation). Fetching uses the same hybrid pattern as `default.json`: raw from
@@ -389,6 +414,85 @@ line per row/column rather than one Leaflet element per point — the latter
 would be unworkable at hundreds of thousands of cells. Both checkboxes are
 persisted (`settings.forklarOn`/`settings.forklarGrid`, additive — no
 version bump), same pattern as the husrekke sub-checkboxes.
+
+### 3D-visning (`lydnivakart3d.html`)
+
+A read-only companion view of the map simulator's current setup, rendered
+with MapLibre GL JS instead of Leaflet — the one place in the app that
+renders in 3D (tiltable/rotatable camera via `NavigationControl`). Reached
+via an «Åpne i 3D» button in `lydnivakart.html`'s Oppsett group, which writes
+the *unchanged* `snapshot()` to `sessionStorage` (key
+`lydnivakart3d:config`) and opens `lydnivakart3d.html` with
+`window.open(url, '_blank')` — deliberately **without** `noopener`/
+`noreferrer`, since sessionStorage is only cloned into a script-opened tab at
+creation time when the opener relationship is intact; adding `noopener` later
+would silently break the handoff. `lydnivakart3d.js` reads that key through
+the already-tested `normaliserOppsett` (`migrering.js`) — no new save-format
+logic — and shows a plain "no setup found" message (linking back to the map
+page) if it's empty, e.g. when the page is opened directly. The page is a
+one-shot snapshot, not a live view: editing continues in `lydnivakart.html`
+and requires clicking «Åpne i 3D» again to refresh it. Its own «← Tilbake til
+kartsimulator» link closes the tab (`window.close()`, since it was opened via
+`window.open`) rather than navigating there — a plain navigation would boot a
+*fresh* `lydnivakart.html` from `default.json`, which looks exactly like the
+user's in-progress edits (pump positions, grid, etc.) were wiped, when the
+real, untouched 2D tab was sitting in the background the whole time. Falls
+back to a normal navigation if `close()` doesn't take effect (e.g. the page
+wasn't opened via the button).
+
+Husrekker are re-fetched independently (same hybrid-fetch-with-fallback
+pattern as `loadHusrekker()` in `lydnivakart.html`, duplicated rather than
+shared — the two pages are self-contained, per the "Testable JS modules"
+convention above) and extruded flat-height (`HUS_HOYDE_M`, a placeholder —
+real per-row height data doesn't exist yet) via `fill-extrusion`; rows with a
+`tredjeEtasje` field (see "Husrekker" above) get a second, separately-sourced
+extrusion (`husrekker-3d-ekstra`, base = `HUS_HOYDE_M`, height = `HUS_HOYDE_M
++ EKSTRA_ETASJE_M`) stacked on top, skipped entirely when no row has the
+field. Pumps are plain (non-draggable) `maplibregl.Marker`s — this page has
+no drag/edit interaction at all.
+
+**dB-vegger** (the walls): the same marching-squares contour segments
+`renderContours` draws as flat lines in 2D (`marchingSquares`/
+`boundarySegments`, `gridGeo.js`) are buffered into thin, ribbon-like
+extruded polygons (`veggerGeoJSON` in `grid3d.js`, buffered perpendicular in
+the local metric plane, ~8 cm wide total — thin enough to read as a curtain
+along the contour rather than a wall that swallows the 3D depth cue between
+it and a husrekke) — one `fill-extrusion` layer per active class-matrix
+limit, colored with the same `FARGE`/`heat()` table as 2D (duplicated, same
+rationale as `HUS_BASER`). Height is *relative to the lowest active limit*
+(`VEGG_MIN_HOYDE_M + (lim − lavest) * VEGG_TRINN_PER_DB`, not an absolute dB
+scale) so the tallest wall stays in the same order of magnitude as
+`HUS_HOYDE_M` regardless of which limits happen to be active, rather than
+e.g. 45 dB alone producing a wall several times taller than the houses — an
+earlier version anchored to a fixed dB baseline had exactly that problem.
+Rising with dB gives a "stepped" shape matching the 2D color convention
+(warm/strict = outermost = shortest, cool/mild = innermost = tallest). A
+matching **gulv-fyll** (ground fill) reuses `renderFyll`'s per-cell coloring
+logic (highest active limit a cell exceeds, no accumulation) but paints it
+into an offscreen canvas once and drapes it as a MapLibre `image` source
+(`toDataURL()` is fine here — a single one-off encode, not the many-times-
+per-drag-frame cost `renderFyll` itself deliberately avoids) — this is what
+makes the "room" between floor and walls legible.
+
+Computing the grid itself needed for the walls is the one place this page
+calls into WASM at all: it boots its own core instance (`initAcoustics`,
+`wasmInit.js`, same two-stage local/deployed boot as everywhere else;
+failure degrades to the position-only view above with a visible message,
+never a silent wrong number) and mirrors `gridWorker.js`'s call convention
+(stride-4 pumps, the same PerKilde/Skjermet feature-detect/fallback order)
+but as **one synchronous main-thread call** (`rowStart=0, rowEnd=rows`) —
+this page is a static one-shot render, not something dragging needs to stay
+smooth, so the worker-pool machinery `computeGrid`/`gjenoppbyggPool` uses in
+2D would be disproportionate here. That simplicity has a real cost, though:
+`gridDimsFraOppsett`'s cell cap (`grid3d.js`) is deliberately **lower** than
+2D's `MAX_CELLS` (60,000 vs. 400,000) precisely because 2D spreads its cells
+over a pool of up to 16 workers while this page does it all on one thread —
+a grid sized for the 2D pool blocked this page's main thread long enough for
+the browser to consider the tab hung, observed in practice when a
+larger/finer grid built in 2D was carried over to 3D. Coarsening is reported
+visibly in the info line (mirroring `updateGridInfo()` in 2D), never silent.
+Respects `opp.gridOn` (off ⇒ no walls, matching 2D) and `opp.husOn &&
+opp.husSkjerm` (selects the shielded vs. unshielded export).
 
 ### `default.json` hybrid live-fetch
 
