@@ -21,8 +21,7 @@ library
     exposed-modules:  Lyd.Beregning
                       Lyd.Felt
     hs-source-dirs:   src
-    build-depends:    array >=0.5 && <0.6,
-                      base >=4.15 && <5,
+    build-depends:    base >=4.15 && <5,
                       vector >=0.12 && <1
     default-language: Haskell2010
 

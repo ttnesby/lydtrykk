@@ -41,7 +41,6 @@ module Lyd.Felt
   )
 where
 
-import Data.Array (Array, accumArray, elems)
 import Data.Fixed (mod')
 import Data.List (foldl', maximumBy)
 import Data.Ord (comparing)
@@ -192,8 +191,8 @@ segmentKrysserPolygon :: Punkt -> Punkt -> Polygon -> Bool
 segmentKrysserPolygon a b poly = segmentKrysserKanter a b (kanter poly)
 
 -- | Som 'segmentKrysserPolygon', mot en ferdigbygd kantliste
--- (spesifikasjonsstien; den varme stien bruker 'segmenterKrysser' direkte
--- mot kandidatkantene fra 'kandidatKanter').
+-- (spesifikasjonsstien; den varme stien bruker
+-- 'segmentKrysserKanterVUtenomEgenFasade').
 segmentKrysserKanter :: Punkt -> Punkt -> [(Punkt, Punkt)] -> Bool
 segmentKrysserKanter a b = any (uncurry (segmenterKrysser a b))
 
@@ -339,10 +338,9 @@ rutenettStripe plasserte = rutenettStripeSkjermet plasserte []
 
 -- | 'rutenettStripe' med husrekke-polygoner: hver celle regnes som i
 -- 'nivaaIPunktSkjermet' (NaN-maskering + skjermingsfradrag), radmajor.
--- Polygonforenklingen, «eget polygon»-unntaket og hver kildes
--- kandidatkant-oppslag ('Skyggekonvolutt') regnes én gang for stripen, ikke
--- per celle — resultatet er identisk med å kalle 'nivaaIPunktSkjermet' per
--- celle (pinnes av en test).
+-- Polygonforenklingen, bounding-boksene og «eget polygon»-unntaket per kilde
+-- regnes én gang for stripen, ikke per celle — resultatet er identisk med å
+-- kalle 'nivaaIPunktSkjermet' per celle (pinnes av en test).
 rutenettStripeSkjermet :: [PlassertKilde] -> [Polygon] -> Stripe -> VS.Vector Double
 rutenettStripeSkjermet plasserte polygoner stripe =
   VS.generate (max 0 rader * max 0 kolonner) celleVerdi
@@ -360,15 +358,13 @@ rutenettStripeSkjermet plasserte polygoner stripe =
             (Punkt (fromIntegral kol * celle) (fromIntegral (stRadStart stripe + rad) * celle))
 
 -- | Polygon med forhåndsberegnede kanter og bounding-boks. Kantene ligger i
--- en flat, unboxed vektor @(x1, y1, x2, y2)@: den varme cellemaskerings-testen
--- ('punktIKanterV') går da som en stram løkke uten pekerjaging —
--- listetraverseringen og allokeringen per celle×polygon dominerte kjøretiden
--- med tett digitaliserte polygoner (59–304 hjørner per reell husrekke, før
--- forenkling). Boksen ('hiMinX'\/'hiMinY'\/'hiMaxX'\/'hiMaxY') brukes til å
--- gjøre cellemaskeringen billig utenfor polygonets utstrekning; kantene
--- brukes i tillegg av 'byggKonvolutt' til å bygge kildens
--- kandidatkant-oppslag. Polygonet ('hiPoly') er allerede forenklet når
--- 'lagHindre' har bygget hinderet.
+-- en flat, unboxed vektor @(x1, y1, x2, y2)@: de varme testene
+-- ('punktIKanterV'\/'segmentKrysserKanterVUtenomEgenFasade') går da som
+-- stramme løkker uten pekerjaging — listetraverseringen og allokeringen per celle×polygon
+-- dominerte kjøretiden med tett digitaliserte polygoner (59–304 hjørner per
+-- reell husrekke, før forenkling). Boksen er forfilteret som gjør sikttesten
+-- billig når kilde og punkt ligger på samme side av rekka. Polygonet
+-- ('hiPoly') er allerede forenklet når 'lagHindre' har bygget hinderet.
 data Hinder = Hinder
   { hiPoly :: Polygon,
     hiKanter :: !(VU.Vector (Double, Double, Double, Double)),
@@ -395,14 +391,13 @@ tilHinder poly =
 lagHindre :: [Polygon] -> [Hinder]
 lagHindre = map tilHinder . gyldigeHusrekker
 
--- | Per kilde: et 'Skyggekonvolutt'-kandidatoppslag over kantene til
--- hindrene kilden ikke står bokstavelig INNI — regnes én gang per stripe,
--- ikke per punkt. (Kilder bare nær, men utenfor, egen fasade får hinderet
--- med i oppslaget — selve kant-unntaket for den nære fasaden skjer i
--- 'byggKonvolutt', som filtrerer bort kanter < 1 m fra kilden.)
-lagKildeHindre :: [Hinder] -> [PlassertKilde] -> [(PlassertKilde, Skyggekonvolutt)]
+-- | Per kilde: hindrene der kilden ikke står bokstavelig INNI polygonet —
+-- regnes én gang, ikke per punkt. (Kilder bare nær, men utenfor, egen
+-- fasade beholder hinderet i lista — selve kant-unntaket skjer per kryssing
+-- i 'nivaaMedHindre', se 'segmentKrysserKanterVUtenomEgenFasade'.)
+lagKildeHindre :: [Hinder] -> [PlassertKilde] -> [(PlassertKilde, [Hinder])]
 lagKildeHindre hindre plasserte =
-  [ (p, byggKonvolutt (pkPos p) [h | h <- hindre, not (punktIPolygon (hiPoly h) (pkPos p))])
+  [ (p, [h | h <- hindre, not (punktIPolygon (hiPoly h) (pkPos p))])
   | p <- plasserte
   ]
 
@@ -415,111 +410,47 @@ punktIKanterV ks (Punkt x y) = VU.foldl' vend False ks
       | (y1 > y) /= (y2 > y) && x < (x2 - x1) * (y - y1) / (y2 - y1) + x1 = not inne
       | otherwise = inne
 
--- | Antall vinkel-bøtter kandidatoppslaget ('Skyggekonvolutt') deler sirkelen
--- i (1° per bøtte).
-nBoetter :: Int
-nBoetter = 360
-
--- | Sikkerhetsmargin (bøtter) lagt til hver kants vinkelspenn ved bygging av
--- kandidatoppslaget. Trengs for å tåle avrundingen i vinkelberegningen ved
--- bøtte-grensene: en prototype i Wolfram Language viste at en konvolutt som
--- prøver å *erstatte* selve kryssingstesten med en vinkel→avstand-formel kan
--- gi feil svar på eksakt kollineære siktlinjer (rekonstruksjon av
--- retningsvektoren fra en avrundet bearing via sin/cos flytter
--- skjæringspunktet en mikroskopisk avstand ved store avstander — nok til å
--- flippe en grensesak). Løsningen her unngår det problemet ved konstruksjon:
--- konvolutten brukes KUN til å velge ut kandidatkanter (se 'kandidatKanter'),
--- mens selve avgjørelsen fortsatt kjører den uendrede 'segmenterKrysser' —
--- margen sikrer bare at det aldri velges bort en kant som burde vært
--- kandidat (ingen falske negativer), ikke at selve testen er eksakt.
-margeBoetter :: Int
-margeBoetter = 2
-
--- | Retning (0–360°, nord medurs — samme konvensjon som 'retningsavvik' sin
--- interne bearing-beregning) fra første til andre punkt.
-retningTilPunkt :: Punkt -> Punkt -> Double
-retningTilPunkt (Punkt px py) (Punkt qx qy) =
-  (atan2 (qx - px) (qy - py) * 180 / pi) `mod'` 360
-
--- | Vinkelspennet en kant dekker sett fra kilden, den korte veien (< 180° —
--- et segment sett fra et eksternt punkt spenner alltid mindre enn 180°).
--- @(lo, hi)@ med økende vinkel medurs fra @lo@ til @hi@; kan krysse
--- 0°/360°-grensen (da er @hi < lo@ numerisk).
-kantVinkelSpenn :: Punkt -> (Double, Double, Double, Double) -> (Double, Double)
-kantVinkelSpenn p (x1, y1, x2, y2) =
-  let b1 = retningTilPunkt p (Punkt x1 y1)
-      b2 = retningTilPunkt p (Punkt x2 y2)
-   in if (b2 - b1) `mod'` 360 <= 180 then (b1, b2) else (b2, b1)
-
--- | Bøtte-indeksene (med 'margeBoetter' margin, kan krysse 0°/360°) et
--- vinkelspenn dekker.
-boetterForSpenn :: (Double, Double) -> [Int]
-boetterForSpenn (lo, hi) = [i `mod` nBoetter | i <- [lo0 .. hi0]]
+-- | Den varme (unboxed-vektor) siden av 'segmentKrysserPolygonUtenomEgenFasade'
+-- — samme regnestykke (pinnes av at hot- og spec-stien er celle for celle
+-- identiske), mot 'hiKanter' i stedet for en kantliste.
+segmentKrysserKanterVUtenomEgenFasade ::
+  Punkt -> Punkt -> VU.Vector (Double, Double, Double, Double) -> Bool
+segmentKrysserKanterVUtenomEgenFasade a b =
+  VU.any fjernKryssing
   where
-    hi' = if hi < lo then hi + 360 else hi
-    lo0 = floor lo - margeBoetter :: Int
-    hi0 = ceiling hi' + margeBoetter :: Int
-
--- | Én kildes kandidatkant-oppslag: for hver vinkel-bøtte, hvilke kanter (fra
--- kildens ikke-egne hindre, se 'lagKildeHindre') som kan ligge i den
--- retningen. IKKE en erstatning for skjermingstesten — bare et filter på
--- hvilke kanter 'nivaaMedHindre' kaller 'segmenterKrysser' på, se
--- 'margeBoetter'. Lagret som en flat CSR-struktur (bøtte-offsetter +
--- sammenhengende kantvektor), i samme stil som 'Hinder' sine kanter.
-data Skyggekonvolutt = Skyggekonvolutt
-  { skStart :: !(VU.Vector Int),
-    skKanter :: !(VU.Vector (Double, Double, Double, Double))
-  }
-
--- | Bygg kandidatoppslaget for én kilde. Kanter nærmere enn 1 m fra kilden
--- (egen-fasade-unntaket, samme grense som 'segmentKrysserPolygonUtenomEgenFasade')
--- filtreres bort her, én gang — i stedet for å sjekkes på nytt i
--- 'nivaaMedHindre' sin varme løkke, siden avstanden ikke avhenger av punktet.
-byggKonvolutt :: Punkt -> [Hinder] -> Skyggekonvolutt
-byggKonvolutt p hindre =
-  Skyggekonvolutt (VU.fromList offsets) (VU.fromList (concat grupper))
-  where
-    alleKanter = concatMap (VU.toList . hiKanter) hindre
-    relevante =
-      [ k
-        | k@(x1, y1, x2, y2) <- alleKanter,
-          punktSegmentAvstand p (Punkt x1 y1, Punkt x2 y2) >= 1
-      ]
-    tildelinger = [(b, k) | k <- relevante, b <- boetterForSpenn (kantVinkelSpenn p k)]
-    arr :: Array Int [(Double, Double, Double, Double)]
-    arr = accumArray (flip (:)) [] (0, nBoetter - 1) tildelinger
-    grupper = elems arr
-    offsets = scanl (+) 0 (map length grupper)
-
--- | Kandidatkantene for punktet, sett fra kilden — oppslag i 'p''s bøtte.
-kandidatKanter :: Skyggekonvolutt -> Punkt -> Punkt -> [(Double, Double, Double, Double)]
-kandidatKanter (Skyggekonvolutt start kanter) p pt =
-  [kanter VU.! i | i <- [s .. e - 1]]
-  where
-    b = floor (retningTilPunkt p pt) `mod` nBoetter :: Int
-    s = start VU.! b
-    e = start VU.! (b + 1)
+    fjernKryssing (x1, y1, x2, y2) =
+      segmenterKrysser a b (Punkt x1 y1) (Punkt x2 y2)
+        && punktSegmentAvstand a (Punkt x1 y1, Punkt x2 y2) >= 1
 
 -- | Den varme stien: samme regnestykke som 'nivaaIPunktSkjermet' (pinnes av
--- en test), men mot ferdigbygde 'Hinder' og per-kilde 'Skyggekonvolutt' —
--- delt mellom rutenettet og fasadepunktene. Kildebidragene akkumuleres i en
--- strikt fold i stedet for å bygge en liste per celle; samme
--- venstre-til-høyre-rekkefølge som listesummen i 'kumulativ', så resultatet
--- er bit-identisk.
-nivaaMedHindre :: [(PlassertKilde, Skyggekonvolutt)] -> [Hinder] -> Punkt -> Double
-nivaaMedHindre kildeKonvolutter hindre pt
+-- en test), men mot ferdigbygde 'Hinder' — delt mellom rutenettet og
+-- fasadepunktene. Kildebidragene akkumuleres i en strikt fold i stedet for å
+-- bygge en liste per celle; samme venstre-til-høyre-rekkefølge som listesummen
+-- i 'kumulativ', så resultatet er bit-identisk.
+nivaaMedHindre :: [(PlassertKilde, [Hinder])] -> [Hinder] -> Punkt -> Double
+nivaaMedHindre kildeHindre hindre pt
   | any (\h -> iBoks h pt && punktIKanterV (hiKanter h) pt) hindre = 0 / 0
-  | otherwise = 10 * logBase 10 (foldl' leggTil 0 kildeKonvolutter)
+  | otherwise = 10 * logBase 10 (foldl' leggTil 0 kildeHindre)
   where
-    leggTil !acc (p, konvolutt) =
+    leggTil !acc (p, hs) =
       let Desibel l = punktBidrag p pt
-          blokkert (x1, y1, x2, y2) = segmenterKrysser (pkPos p) pt (Punkt x1 y1) (Punkt x2 y2)
-          fradrag = if any blokkert (kandidatKanter konvolutt (pkPos p) pt) then skjermingDb else 0
+          blokkert h =
+            boksTreffes (pkPos p) pt h
+              && segmentKrysserKanterVUtenomEgenFasade (pkPos p) pt (hiKanter h)
+          fradrag = if any blokkert hs then skjermingDb else 0
        in acc + 10 ** ((l - fradrag) / 10)
 
 iBoks :: Hinder -> Punkt -> Bool
 iBoks h (Punkt x y) =
   x >= hiMinX h && x <= hiMaxX h && y >= hiMinY h && y <= hiMaxY h
+
+-- | Overlapper segmentets bounding-boks polygonets?
+boksTreffes :: Punkt -> Punkt -> Hinder -> Bool
+boksTreffes (Punkt ax ay) (Punkt bx by) h =
+  min ax bx <= hiMaxX h
+    && max ax bx >= hiMinX h
+    && min ay by <= hiMaxY h
+    && max ay by >= hiMinY h
 
 -- Fasadepunkter --------------------------------------------------------------
 
