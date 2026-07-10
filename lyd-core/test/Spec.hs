@@ -482,6 +482,51 @@ skjermTests =
       testCase "degenerert polygon (< 3 hjørner) ignoreres" $
         nivaaIPunktSkjermet [bakVeggen] [[Punkt 0 0, Punkt 1 0]] foranVeggen
           @?= dBA (nivaaIPunkt [bakVeggen] foranVeggen),
+      -- Regresjon fra Wolfram-prototypen (se planen «jeg-hadde-en-dialog…»,
+      -- Fase 0): en konvolutt som rekonstruerer siktlinjen fra en avrundet
+      -- bearing (sin/cos) i stedet for å bruke 'segmenterKrysser' direkte kan
+      -- gi falsk positiv skjerming akkurat på en kollineær siktlinje — den
+      -- typen tilfeldig genererte QuickCheck-punkter praktisk talt aldri
+      -- treffer. Kjører derfor den varme stien ('rutenettStripeSkjermet')
+      -- eksplisitt på nøyaktig denne konfigurasjonen.
+      testCase "hot-sti: kollineær siktlinje langs en kant skjermer ikke (regresjon)" $ do
+        let veggLangs = [Punkt (-5) 5, Punkt 5 5, Punkt 5 6, Punkt (-5) 6]
+            kilde = pk53 (Punkt (-10) 5) 0
+            punkt = Punkt 10 5
+            stripe = Stripe 5 6 11 (Meter 1)
+            fikk = VS.toList (rutenettStripeSkjermet [kilde] [veggLangs] stripe) !! 10
+        fikk @?= nivaaIPunktSkjermet [kilde] [veggLangs] punkt
+        assertBool "uskjermet (kollineær teller ikke som kryssing)" $
+          abs (fikk - dBA (nivaaIPunkt [kilde] punkt)) < 1e-9,
+      -- Andre Fase 0-fixture: konkav husrekke (C-form med et hakk) — kilden
+      -- står i hakket. Sjekker at kandidatkant-utvelgelsen verken går glipp
+      -- av kanter (punktet gjennom hakkets indre vegg og ytterkanten skal
+      -- skjermes) eller feilaktig plukker opp kanter (punktet rett gjennom
+      -- den åpne munnen skal IKKE skjermes).
+      testCase "hot-sti: konkav husrekke med åpen munn (skjermer på tvers, ikke gjennom åpningen)" $ do
+        let notch =
+              [ Punkt 5 0,
+                Punkt 15 0,
+                Punkt 15 4,
+                Punkt 11 4,
+                Punkt 11 8,
+                Punkt 15 8,
+                Punkt 15 12,
+                Punkt 5 12
+              ]
+            kilde = pk53 (Punkt 13 6) 0 -- i hakket, altså utenfor polygonet
+            blokkertPunkt = Punkt 2 6
+            apentPunkt = Punkt 18 6
+            stripe = Stripe 6 7 19 (Meter 1)
+            celler = VS.toList (rutenettStripeSkjermet [kilde] [notch] stripe)
+            blokkert = celler !! 2
+            apent = celler !! 18
+        blokkert @?= nivaaIPunktSkjermet [kilde] [notch] blokkertPunkt
+        apent @?= nivaaIPunktSkjermet [kilde] [notch] apentPunkt
+        assertBool "gjennom hakkets indre vegg + ytterkant: skjermet ≈ −10 dB" $
+          abs (blokkert - (dBA (nivaaIPunkt [kilde] blokkertPunkt) - skjermingDb)) < 1e-9
+        assertBool "gjennom åpen munn: uskjermet" $
+          abs (apent - dBA (nivaaIPunkt [kilde] apentPunkt)) < 1e-9,
       testProperty "uten polygoner: identisk med rutenettStripe" $
         forAll genPlasserte $ \plasserte ->
           forAll genStripe $ \stripe ->
