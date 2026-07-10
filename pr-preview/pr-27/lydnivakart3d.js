@@ -3,8 +3,12 @@
 // ekstruderte vegger. Redigering skjer fortsatt i 2D-simulatoren.
 import { normaliserOppsett } from './migrering.js';
 import { normaliserHusrekke } from './husrekker.js';
-import { toLocal, fromLocal, marchingSquares, boundarySegments } from './gridGeo.js';
+import { fromLocal, marchingSquares, boundarySegments } from './gridGeo.js';
 import { initAcoustics } from './wasmInit.js';
+import {
+  gridDimsFraOppsett, pumpsLocal, husPolysLocal,
+  husrekkerGeoJSON, tredjeEtasjeGeoJSON, veggerGeoJSON,
+} from './grid3d.js';
 
 const SESSION_KEY = 'lydnivakart3d:config';
 
@@ -20,6 +24,11 @@ const HUS_BASER = [
 // Ekte bygningshøyde finnes ikke i husrekker/polygoner/*.json ennå – midlertidig
 // fast ekstruderingshøyde til dataene finnes.
 const HUS_HOYDE_M = 6;
+// Placeholder-tillegg for enheter med 3. etasje (normaliserHusrekke sitt
+// valgfrie 'tredjeEtasje'-felt) – en ekstra boks stablet oppå HUS_HOYDE_M,
+// ikke en erstatning av grunnhøyden. Samme «juster senere»-status som
+// HUS_HOYDE_M: ekte tall kommer når brukerens polygondata er klare.
+const EKSTRA_ETASJE_M = 3;
 
 // Farge per dB-grense, duplisert fra FARGE/heat() i lydnivakart.html – samme
 // farge på veggene her som på konturlinjene i 2D (de to sidene er selvstendige,
@@ -87,62 +96,6 @@ function bboxSenter(pumps, husRekker) {
   return { center: [(Math.min(...lngs) + Math.max(...lngs)) / 2, (Math.min(...lats) + Math.max(...lats)) / 2], zoom: 18 };
 }
 
-function husrekkerGeoJSON(husRekker) {
-  return {
-    type: 'FeatureCollection',
-    features: husRekker.map(r => ({
-      type: 'Feature',
-      properties: { navn: r.navn },
-      geometry: {
-        type: 'Polygon',
-        // GeoJSON krever lukket ring; normaliserHusrekke returnerer en åpen
-        // ring (Leaflet lukker selv) – tetter den igjen her.
-        coordinates: [[...r.punkter.map(p => [p.lng, p.lat]), [r.punkter[0].lng, r.punkter[0].lat]]],
-      },
-    })),
-  };
-}
-
-// ---- rutenett (dB-vegger) ----
-// gridDims()-ekvivalent fra lydnivakart.html:685 – regner cols/rows fra det
-// overførte grid-oppsettet (sw/ne/res), med samme MAX_CELLS-grovning.
-function gridDimsFraOppsett(grid) {
-  const sw = { lat: Math.min(grid.sw.lat, grid.ne.lat), lng: Math.min(grid.sw.lng, grid.ne.lng) };
-  const ne = { lat: Math.max(grid.sw.lat, grid.ne.lat), lng: Math.max(grid.sw.lng, grid.ne.lng) };
-  const { x: wRaw, y: hRaw } = toLocal(ne, sw);
-  const w = Math.max(wRaw, 2), h = Math.max(hRaw, 2);
-  let res = grid.res || 2, coarsened = false;
-  let cols = Math.max(2, Math.round(w / res) + 1), rows = Math.max(2, Math.round(h / res) + 1);
-  if (cols * rows > MAX_CELLS) {
-    res = res * Math.sqrt((cols * rows) / MAX_CELLS);
-    cols = Math.max(2, Math.round(w / res) + 1);
-    rows = Math.max(2, Math.round(h / res) + 1);
-    coarsened = true;
-  }
-  return { sw, res, cols, rows, coarsened };
-}
-
-// Effektivt kildenivå – samme klamping/regnestykke som nivaaAv() i
-// lydnivakart.html. 'globale' er {lyd,vegg,kab} fra det overførte oppsettets
-// toppnivå-felter (opp.lyd/vegg/kab); en pumpe med 'lokal' bruker sine egne.
-function nivaaAv(v) {
-  const lyd = Math.min(70, Math.max(40, parseFloat(v.lyd) || 0));
-  const vegg = v.vegg ? 3 : 0;
-  const kab = Math.max(0, parseFloat(v.kab) || 0);
-  return lyd + vegg - kab;
-}
-function pumpsLocal(pumps, origin, globale) {
-  return pumps.map(p => ({ ...toLocal({ lat: p.lat, lng: p.lng }, origin), brg: p.brg, nivaa: nivaaAv(p.lokal || globale) }));
-}
-function husPolysLocal(husRekker, origin) {
-  const antall = [], xy = [];
-  husRekker.forEach(r => {
-    antall.push(r.punkter.length);
-    r.punkter.forEach(pt => { const l = toLocal(pt, origin); xy.push(l.x, l.y); });
-  });
-  return { xy: new Float64Array(xy), antall: new Float64Array(antall) };
-}
-
 // Mirrorer WASM-kallkonvensjonen i gridWorker.js (samme stride-4-pumper, samme
 // feature-detect/fallback-rekkefølge for PerKilde/Skjermet-eksportene), men
 // som ETT synkront hovedtråd-kall (rowStart=0, rowEnd=rows) – denne siden er
@@ -151,7 +104,7 @@ function beregnRutenett(opp, husRekker, acoustics) {
   if (typeof acoustics.acoustics_gridStripe !== 'function') {
     return { feil: 'app.wasm mangler rutenett-eksporten (eldre binær) – bygg lokalt eller bruk PR-previewen.' };
   }
-  const { sw, res, cols, rows, coarsened } = gridDimsFraOppsett(opp.grid);
+  const { sw, res, cols, rows, coarsened } = gridDimsFraOppsett(opp.grid, MAX_CELLS);
   const globale = { lyd: opp.lyd, vegg: opp.vegg, kab: opp.kab };
   const pl = pumpsLocal(opp.pumps, sw, globale);
   const medHus = opp.husOn && opp.husSkjerm;
@@ -185,25 +138,6 @@ function beregnRutenett(opp, husRekker, acoustics) {
     }
   }
   return { grid: values, rows, cols, res, sw, uskjermet, fellesnivaa, coarsened };
-}
-
-// Bygger en tynn, ekstrudérbar stripe-polygon per kontursegment: samme
-// segmenter (rad/kolonne-koordinater) som renderContours() i lydnivakart.html
-// bruker til konturlinjene i 2D, bufret vinkelrett i det lokale metriske
-// planet (ikke i lat/lng, som ikke er metrisk) før projeksjon til lat/lng.
-function veggerGeoJSON(segments, res, sw) {
-  const features = [];
-  for (const [p0, p1] of segments) {
-    const x0 = p0[1] * res, y0 = p0[0] * res;
-    const x1 = p1[1] * res, y1 = p1[0] * res;
-    const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
-    if (len === 0) continue;
-    const nx = (-dy / len) * VEGG_HALVBREDDE_M, ny = (dx / len) * VEGG_HALVBREDDE_M;
-    const hjorner = [[x0 + nx, y0 + ny], [x1 + nx, y1 + ny], [x1 - nx, y1 - ny], [x0 - nx, y0 - ny], [x0 + nx, y0 + ny]];
-    const ring = hjorner.map(([x, y]) => { const { lat, lng } = fromLocal(x, y, sw); return [lng, lat]; });
-    features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] } });
-  }
-  return { type: 'FeatureCollection', features };
 }
 
 // Gulv-fyll: samme fargelogikk som renderFyll() i lydnivakart.html (hver
@@ -253,7 +187,7 @@ function leggTilVegger(map, opp, resultat) {
     const segs = marchingSquares(grid, rows, cols, lim).concat(boundarySegments(grid, rows, cols, lim));
     if (!segs.length) return;
     const srcId = `vegg-${lim}`;
-    map.addSource(srcId, { type: 'geojson', data: veggerGeoJSON(segs, res, sw) });
+    map.addSource(srcId, { type: 'geojson', data: veggerGeoJSON(segs, res, sw, VEGG_HALVBREDDE_M) });
     map.addLayer({
       id: srcId,
       type: 'fill-extrusion',
@@ -325,6 +259,25 @@ async function start(opp) {
           'fill-extrusion-opacity': 0.85,
         },
       });
+      // Ekstra boks for enheter med 3. etasje (normaliserHusrekke sitt
+      // valgfrie 'tredjeEtasje'-felt) – stablet oppå grunnhøyden, ikke en
+      // erstatning av den. Hoppes over (ingen kilde/lag) hvis ingen rekker
+      // har feltet ennå.
+      const ekstraData = tredjeEtasjeGeoJSON(husRekker);
+      if (ekstraData.features.length) {
+        map.addSource('husrekker-ekstra', { type: 'geojson', data: ekstraData });
+        map.addLayer({
+          id: 'husrekker-3d-ekstra',
+          type: 'fill-extrusion',
+          source: 'husrekker-ekstra',
+          paint: {
+            'fill-extrusion-color': '#888',
+            'fill-extrusion-height': HUS_HOYDE_M + EKSTRA_ETASJE_M,
+            'fill-extrusion-base': HUS_HOYDE_M,
+            'fill-extrusion-opacity': 0.85,
+          },
+        });
+      }
     }
 
     opp.pumps.forEach(p => {
