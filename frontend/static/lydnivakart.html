@@ -230,6 +230,8 @@
       <button class="btn" id="load">Last fra fil</button>
       <input type="file" id="loadfile" accept=".json,application/json" hidden>
       <p class="note">Lagrer alt – soner, lydkilde, alle utedeler (plassering + vinkel + eventuelle lokale verdier), rutenettets hjørner/oppløsning og kartutsnitt – som en JSON-fil i nedlastingsmappa. «Last fra fil» setter alt tilbake til lagret tilstand.</p>
+      <button class="btn" id="open3d">Åpne i 3D</button>
+      <p class="note">Åpner en ny fane med utedelenes posisjoner, husrekkene og dB-ekvidistansene som ekstruderte vegger i et vippbart/roterbart 3D-kart. Foreløpig flatt underlag (ikke ekte terreng), husrekkene har en midlertidig fast høyde, og siden er ikke redigerbar (rediger her og åpne på nytt for å oppdatere).</p>
     </div>
 
     <div class="grp">
@@ -1362,6 +1364,13 @@ document.getElementById('loadfile').addEventListener('change',e=>{
   r.onload=()=>{ try{ restore(JSON.parse(r.result)); }catch(err){ alert('Kunne ikke lese fila: '+err.message); } };
   r.readAsText(f);
   e.target.value='';   // tillat å laste samme fil på nytt
+});
+// Overfører dagens oppsett til 3D-visningen via sessionStorage (delt med en
+// fane åpnet fra samme fane – IKKE legg til noopener/noreferrer på open()-et
+// under, det bryter delingen stille).
+document.getElementById('open3d').addEventListener('click',()=>{
+  sessionStorage.setItem('lydnivakart3d:config',JSON.stringify(snapshot()));
+  window.open('lydnivakart3d.html','_blank');
 });
 
 updateCounts();   // matrise/legende/rutenett/defaults rendres av bootAkustikk() når kjernen er klar
