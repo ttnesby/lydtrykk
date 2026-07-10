@@ -46,10 +46,15 @@ const VEGG_HALVBREDDE_M = 0.04;
 // rasterflate i stedet for et Leaflet-canvaslag.
 const GULV_ALPHA = 45;
 
-// Tak på celletall, samme sikkerhetsnett som MAX_CELLS i lydnivakart.html –
-// et veldig stort overført rutenett skal grovnes automatisk, ikke fryse fanen
-// (denne siden regner ett synkront hovedtråd-kall, ingen worker-pool).
-const MAX_CELLS = 400000;
+// Tak på celletall – MERK: lavere enn MAX_CELLS (400 000) i lydnivakart.html.
+// 2D fordeler cellene over en pool på opptil 16 web workers; denne siden
+// regner alt i ETT synkront hovedtråd-kall. Et rutenett stort nok til å holde
+// 2D-poolen travelt kan blokkere hovedtråden lenge nok til at nettleseren
+// tror fanen har frosset (observert i praksis: gikk 2D→3D, forstørret/
+// finkornet rutenettet i 2D, gikk tilbake til 3D – fanen hang). Grovnes
+// derfor mye hardere her, og varsles synlig (samme mønster som
+// gridDims()/updateGridInfo() i 2D) i stedet for å la det henge stille.
+const MAX_CELLS = 60000;
 
 async function hentHusrekker() {
   const get = url => fetch(url + '?t=' + Date.now(), { cache: 'no-store' })
@@ -106,14 +111,15 @@ function gridDimsFraOppsett(grid) {
   const ne = { lat: Math.max(grid.sw.lat, grid.ne.lat), lng: Math.max(grid.sw.lng, grid.ne.lng) };
   const { x: wRaw, y: hRaw } = toLocal(ne, sw);
   const w = Math.max(wRaw, 2), h = Math.max(hRaw, 2);
-  let res = grid.res || 2;
+  let res = grid.res || 2, coarsened = false;
   let cols = Math.max(2, Math.round(w / res) + 1), rows = Math.max(2, Math.round(h / res) + 1);
   if (cols * rows > MAX_CELLS) {
     res = res * Math.sqrt((cols * rows) / MAX_CELLS);
     cols = Math.max(2, Math.round(w / res) + 1);
     rows = Math.max(2, Math.round(h / res) + 1);
+    coarsened = true;
   }
-  return { sw, res, cols, rows };
+  return { sw, res, cols, rows, coarsened };
 }
 
 // Effektivt kildenivå – samme klamping/regnestykke som nivaaAv() i
@@ -145,7 +151,7 @@ function beregnRutenett(opp, husRekker, acoustics) {
   if (typeof acoustics.acoustics_gridStripe !== 'function') {
     return { feil: 'app.wasm mangler rutenett-eksporten (eldre binær) – bygg lokalt eller bruk PR-previewen.' };
   }
-  const { sw, res, cols, rows } = gridDimsFraOppsett(opp.grid);
+  const { sw, res, cols, rows, coarsened } = gridDimsFraOppsett(opp.grid);
   const globale = { lyd: opp.lyd, vegg: opp.vegg, kab: opp.kab };
   const pl = pumpsLocal(opp.pumps, sw, globale);
   const medHus = opp.husOn && opp.husSkjerm;
@@ -178,7 +184,7 @@ function beregnRutenett(opp, husRekker, acoustics) {
       acoustics.acoustics_gridStripe(felles, xyb, 0, rows, cols, res, values);
     }
   }
-  return { grid: values, rows, cols, res, sw, uskjermet, fellesnivaa };
+  return { grid: values, rows, cols, res, sw, uskjermet, fellesnivaa, coarsened };
 }
 
 // Bygger en tynn, ekstrudérbar stripe-polygon per kontursegment: samme
@@ -351,6 +357,7 @@ async function start(opp) {
     leggTilGulv(map, opp, resultat);
     const aktive = leggTilVegger(map, opp, resultat);
     melding.textContent = `${opp.pumps.length} utedel(er) overført`;
+    if (resultat.coarsened) melding.textContent += ` · oppløsningen ble grovnet til ${resultat.res.toFixed(2)} m/celle (3D regner på én tråd, ikke i en worker-pool som 2D)`;
     if (resultat.uskjermet) melding.textContent += ' · kjernen mangler skjerming-eksporten (eldre binær) – regnet uten husskjerming (konservativt)';
     if (resultat.fellesnivaa) melding.textContent += ' · kjernen mangler per-utedel-eksporten (eldre binær) – regnet med høyeste nivå for alle utedelene (konservativt)';
     visFargenokkel(aktive);
