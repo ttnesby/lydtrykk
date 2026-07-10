@@ -64,3 +64,17 @@ test('normaliserHusrekke: feilmeldinger ved ugyldig input', () => {
   assert.throws(() => normaliserHusrekke({ navn: 't', polygon: [[1, 2], [3], [5, 6]] }), /Ugyldig punkt/);
   assert.throws(() => normaliserHusrekke({ navn: 't', polygon: [[1, 2], ['x', 4], [5, 6]] }), /Ugyldig punkt/);
 });
+
+test('normaliserHusrekke: tredjeEtasje – additivt/valgfritt felt for 3D-visningens ekstra etasjeboks', () => {
+  const polygon = [[263900, 6619890], [263910, 6619890], [263910, 6619900]];
+  // mangler feltet helt → ingen ekstra etasje (gamle filer uendret gyldige)
+  assert.deepEqual(normaliserHusrekke({ navn: 't', polygon }).tredjeEtasje, []);
+  // gyldig delpolygon konverteres akkurat som hoved-polygonet
+  const tredjeEtasje = [[[263901, 6619891], [263911, 6619891], [263911, 6619899]]];
+  const rekke = normaliserHusrekke({ navn: 't', polygon, tredjeEtasje });
+  assert.equal(rekke.tredjeEtasje.length, 1);
+  assert.equal(rekke.tredjeEtasje[0].length, 3);
+  assert.deepEqual(rekke.tredjeEtasje[0][0], utm33TilLatLng(263901, 6619891));
+  // et tilstedeværende, ugyldig delpolygon kaster – samme prinsipp som hoved-polygonet
+  assert.throws(() => normaliserHusrekke({ navn: 't', polygon, tredjeEtasje: [[[1, 2], [3, 4]]] }), /minst 3 punkter/);
+});
