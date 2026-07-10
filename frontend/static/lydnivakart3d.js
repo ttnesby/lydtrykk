@@ -371,3 +371,16 @@ if (!opp) {
 } else {
   start(opp);
 }
+
+// «Tilbake»-lenken lukker denne fanen (åpnet med window.open fra 2D) i stedet
+// for å navigere hit til en fersk lydnivakart.html – en vanlig navigasjon
+// booter 2D på nytt fra default.json og virker dermed som om oppsettet ditt
+// (pumpeendringer, rutenett osv.) ble nullstilt, mens den ekte 2D-fanen med
+// endringene dine ligger urørt i bakgrunnen hele tiden. window.close()
+// virker bare på skript-åpnede faner; lykkes den ikke (f.eks. fana ble åpnet
+// på en annen måte), faller vi tilbake på vanlig navigasjon.
+document.getElementById('tilbake').addEventListener('click', (e) => {
+  e.preventDefault();
+  window.close();
+  setTimeout(() => { window.location.href = 'lydnivakart.html'; }, 150);
+});
