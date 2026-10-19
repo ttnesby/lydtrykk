@@ -277,7 +277,8 @@
 // modul (top-level await).
 import { metersPerDeg, toLocal, fromLocal, destPoint, bearing, marchingSquares, boundarySegments, punktIPolygon } from './gridGeo.js';
 import { normaliserOppsett } from './migrering.js';
-import { normaliserHusrekke } from './husrekker.js';
+import { normaliserHusrekke, escapeHtml } from './husrekker.js';
+import { gridDimsFraOppsett } from './grid3d.js';
 
 // Mobile sidebar toggle
 const toggleBtn=document.getElementById('toggle-sidebar');
@@ -675,25 +676,12 @@ const DRAG_COARSEN=3;
 
 // metersPerDeg/toLocal/fromLocal importeres fra gridGeo.js (den lokale
 // planprojeksjonen – samme regnemåte som gridWorker.js forutsetter).
-function effectiveBounds(){
-  const a=corners.sw, b=corners.ne;
-  return {
-    sw:L.latLng(Math.min(a.lat,b.lat), Math.min(a.lng,b.lng)),
-    ne:L.latLng(Math.max(a.lat,b.lat), Math.max(a.lng,b.lng)),
-  };
-}
+// Selve cellecap-matematikken (sw/ne-normalisering + MAX_CELLS-grovning) er
+// delt med 3D-siden via grid3d.js sin testede 'gridDimsFraOppsett' – samme
+// regnestykke, bare med DRAG_COARSEN lagt på oppløsningen her under drag.
 function gridDims(){
-  const {sw,ne}=effectiveBounds();
-  const {x:wRaw,y:hRaw}=toLocal(ne,sw);
-  const w=Math.max(wRaw,2), h=Math.max(hRaw,2);
-  let res=gridRes*(interacting?DRAG_COARSEN:1), coarsened=false;
-  let cols=Math.max(2,Math.round(w/res)+1), rows=Math.max(2,Math.round(h/res)+1);
-  if(cols*rows>MAX_CELLS){
-    res=gridRes*Math.sqrt((cols*rows)/MAX_CELLS);
-    cols=Math.max(2,Math.round(w/res)+1); rows=Math.max(2,Math.round(h/res)+1);
-    coarsened=true;
-  }
-  return {sw,ne,w,h,res,cols,rows,coarsened};
+  const res0=gridRes*(interacting?DRAG_COARSEN:1);
+  return gridDimsFraOppsett({sw:corners.sw, ne:corners.ne, res:res0}, MAX_CELLS);
 }
 
 function hjornIcon(){ return L.divIcon({className:'',iconSize:[14,14],iconAnchor:[7,7],html:'<div class="hjornic"></div>'}); }
@@ -1480,7 +1468,7 @@ function oppdaterFasadeVerst(){
     const farge=over!=null?heat(over):'#667';
     fasadeLayers.push(L.circleMarker(ll,
       {radius:5,color:farge,weight:2.5,fillColor:'#fff',fillOpacity:.9,interactive:false})
-      .bindTooltip(`${r.navn?r.navn+' · ':''}${niv.toFixed(1).replace('.',',')}`,
+      .bindTooltip(`${r.navn?escapeHtml(r.navn)+' · ':''}${niv.toFixed(1).replace('.',',')}`,
         {permanent:true,direction:'top',offset:[0,-6],className:'fasadetip'})
       .addTo(map));
   });

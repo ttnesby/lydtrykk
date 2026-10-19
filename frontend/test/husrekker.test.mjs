@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { utm33TilLatLng, normaliserHusrekke } from '../static/husrekker.js';
+import { utm33TilLatLng, normaliserHusrekke, escapeHtml } from '../static/husrekker.js';
 
 const POLYGONER = new URL('../../husrekker/polygoner/', import.meta.url);
 const les = f => JSON.parse(readFileSync(new URL(f, POLYGONER), 'utf8'));
@@ -63,6 +63,12 @@ test('normaliserHusrekke: feilmeldinger ved ugyldig input', () => {
   assert.throws(() => normaliserHusrekke({ navn: 't', polygon: [[1, 2], [3, 4]] }), /minst 3 punkter/);
   assert.throws(() => normaliserHusrekke({ navn: 't', polygon: [[1, 2], [3], [5, 6]] }), /Ugyldig punkt/);
   assert.throws(() => normaliserHusrekke({ navn: 't', polygon: [[1, 2], ['x', 4], [5, 6]] }), /Ugyldig punkt/);
+});
+
+test('escapeHtml: HTML-spesialtegn escapes, vanlig tekst/norske tegn er uendret', () => {
+  assert.equal(escapeHtml('<img src=x onerror=alert(1)>'), '&lt;img src=x onerror=alert(1)&gt;');
+  assert.equal(escapeHtml(`A & B's "rekke"`), 'A &amp; B&#39;s &quot;rekke&quot;');
+  assert.equal(escapeHtml('Åsen-rekka øst'), 'Åsen-rekka øst');
 });
 
 test('normaliserHusrekke: tredjeEtasje – additivt/valgfritt felt for 3D-visningens ekstra etasjeboks', () => {

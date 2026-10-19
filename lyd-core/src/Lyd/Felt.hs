@@ -12,6 +12,7 @@ module Lyd.Felt
 
     -- * Husrekke-polygoner og skjerming
     Polygon,
+    polygonerFraFlate,
     punktIPolygon,
     segmentKrysserPolygon,
     egetPolygon,
@@ -84,6 +85,29 @@ retningsavvik (PlassertKilde (Punkt kx ky) retning _) (Punkt x y) =
 -- 'Punkt'. Polygoner med færre enn 3 hjørner behandles som ikke-eksisterende
 -- av felt-funksjonene under (de kan verken inneholde punkter eller skjerme).
 type Polygon = [Punkt]
+
+-- | Bygg polygoner fra en flat hjørne-liste @[x0,y0,x1,y1,…]@ og en liste med
+-- antall hjørner per polygon (samme flating som FFI-grensesnittet mot JS
+-- bruker, se 'lesPolygoner' i frontend\/app\/Main.hs). Input kan i prinsippet
+-- være strukturelt ugyldig der (et hjørnetall som ikke stemmer med antall
+-- koordinater som faktisk følger med, eller et negativt tall) — denne
+-- funksjonen tar ren @[Double]@\/@[Int]@ og indekserer aldri utenfor
+-- grensene: et negativt hjørnetall gir et tomt (og dermed senere filtrert
+-- bort, se 'gyldigeHusrekker') polygon, og går man tom for koordinater midt i
+-- et polygon, klippes resten av lista bort i stedet for å produsere et
+-- ufullstendig polygon. Aldri en kastet feil for ugyldig FFI-input — det er
+-- nettopp det denne funksjonen finnes for å unngå.
+polygonerFraFlate :: [Double] -> [Int] -> [Polygon]
+polygonerFraFlate flate antallHjoerner = gaa flate (map (max 0) antallHjoerner)
+  where
+    gaa _ [] = []
+    gaa xy (n : rest) =
+      let (mine, resten) = splitAt (2 * n) xy
+       in if length mine < 2 * n
+            then []
+            else parPunkter mine : gaa resten rest
+    parPunkter (x : y : xs) = Punkt x y : parPunkter xs
+    parPunkter _ = []
 
 -- | Fast skjermingsfradrag (dB) per kildebidrag med brutt siktlinje.
 -- Bevisst konservativt: en reell husrekke gir typisk 15–25 dB (ISO 9613-2

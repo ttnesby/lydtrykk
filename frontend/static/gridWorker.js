@@ -21,6 +21,8 @@
 // feilet import()-løfte i praksis aldri avgjøres i enkelte nettlesere – uten
 // fristen ville 'await acousticsReady' under bli hengende for alltid. Lykkes
 // lastingen etter fristen, plukkes 'acoustics' opp av neste melding.
+import { beregnStripe } from "./acousticsStripe.js";
+
 let acoustics = null;
 function timeout(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 const acousticsReady = Promise.race([
@@ -54,44 +56,9 @@ self.onmessage = async (e) => {
 
   const rows = rowEnd - rowStart;
   const values = new Float64Array(rows * cols);
-  const medSkjerm = polys && polys.antall && polys.antall.length > 0;
-  const perKilde = typeof acoustics.acoustics_gridStripePerKilde === "function";
-  let uskjermet = false;
-  let fellesnivaa = false;
-
-  if (pumps.length === 0) {
-    values.fill(-Infinity);
-  } else if (perKilde) {
-    // Pumpene som flat stride-4-array [x0,y0,brg0,nivaa0, x1,…]; Haskell
-    // fyller 'values' radmajor i ett kall.
-    const xybn = new Float64Array(pumps.length * 4);
-    for (let i = 0; i < pumps.length; i++) {
-      const p = pumps[i];
-      xybn[i * 4] = p.x; xybn[i * 4 + 1] = p.y; xybn[i * 4 + 2] = p.brg; xybn[i * 4 + 3] = p.nivaa;
-    }
-    if (medSkjerm && typeof acoustics.acoustics_gridStripeSkjermetPerKilde === "function") {
-      acoustics.acoustics_gridStripeSkjermetPerKilde(xybn, polys.xy, polys.antall, rowStart, rowEnd, cols, cellSizeM, values);
-    } else {
-      uskjermet = medSkjerm;
-      acoustics.acoustics_gridStripePerKilde(xybn, rowStart, rowEnd, cols, cellSizeM, values);
-    }
-  } else {
-    // Eldre binær (uten PerKilde-eksportene): gamle eksporter med delt nivå.
-    // Høyeste nivå for alle er konservativt; flagges bare når nivåene
-    // faktisk er ulike (ellers er svaret eksakt).
-    const felles = Math.max(...pumps.map((p) => p.nivaa));
-    fellesnivaa = pumps.some((p) => p.nivaa !== felles);
-    const xyb = new Float64Array(pumps.length * 3);
-    for (let i = 0; i < pumps.length; i++) {
-      const p = pumps[i];
-      xyb[i * 3] = p.x; xyb[i * 3 + 1] = p.y; xyb[i * 3 + 2] = p.brg;
-    }
-    if (medSkjerm && typeof acoustics.acoustics_gridStripeSkjermet === "function") {
-      acoustics.acoustics_gridStripeSkjermet(felles, xyb, polys.xy, polys.antall, rowStart, rowEnd, cols, cellSizeM, values);
-    } else {
-      uskjermet = medSkjerm;
-      acoustics.acoustics_gridStripe(felles, xyb, rowStart, rowEnd, cols, cellSizeM, values);
-    }
-  }
+  // Dispatch-logikken (pumpearray + PerKilde/Skjermet/legacy-feature-detect)
+  // er delt med lydnivakart3d.js via acousticsStripe.js – se den modulens
+  // kommentar for hvorfor.
+  const { uskjermet, fellesnivaa } = beregnStripe(acoustics, pumps, polys, rowStart, rowEnd, cols, cellSizeM, values);
   self.postMessage({ reqId, rowStart, values, uskjermet, fellesnivaa }, [values.buffer]);
 };

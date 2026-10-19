@@ -14,7 +14,7 @@ tests :: TestTree
 tests =
   testGroup
     "lyd-core"
-    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper, feltTests, skjermTests, forklaringTests, forenklingTests, fasadeTests]
+    [grenseTests, vinkelTests, kildeTests, paakrevdDempingTests, gylneVerdier, lydnivaaKrysssjekk, tabellTests, egenskaper, kumulativTests, simulatorEgenskaper, feltTests, skjermTests, forklaringTests, forenklingTests, fasadeTests, flateparsingTests]
 
 grenseTests :: TestTree
 grenseTests =
@@ -690,4 +690,34 @@ kumulativTests =
         assertBool
           "kumulativ [53] ~ 53"
           (abs (dBA (kumulativ [Desibel 53]) - 53) < 1e-9)
+    ]
+
+-- | Flat ut polygoner til (xy, antall) – inversen av 'polygonerFraFlate',
+-- for round-trip-egenskapen under.
+flatUt :: [Polygon] -> ([Double], [Int])
+flatUt polys = (concatMap (concatMap (\(Punkt x y) -> [x, y])) polys, map length polys)
+
+-- | 'polygonerFraFlate' parser FFI-grensesnittets flate representasjon av
+-- husrekke-polygoner (se Main.hs sin 'lesPolygoner'). Funksjonen må aldri
+-- krasje på strukturelt ugyldig input (polyAntall som ikke stemmer med
+-- polyXY) — det er nettopp poenget med å ha flyttet parsingen hit fra den
+-- utestede FFI-koden.
+flateparsingTests :: TestTree
+flateparsingTests =
+  testGroup
+    "polygonerFraFlate (FFI-grenseparsing, Lyd.Felt)"
+    [ testProperty "round-trip: gyldig (flate, antall) gir polygonene tilbake uendret" $
+        forAll genPolygoner $ \polys ->
+          let (flate, antall) = flatUt polys
+           in polygonerFraFlate flate antall === polys,
+      testCase "negativt hjørnetall: det polygonet blir tomt, resten uendret" $
+        polygonerFraFlate [0, 0, 1, 0, 1, 1] [-1, 3]
+          @?= [[], [Punkt 0 0, Punkt 1 0, Punkt 1 1]],
+      testCase "for få koordinater til siste polygon: klippes bort i stedet for å krasje" $
+        polygonerFraFlate [0, 0, 1, 0, 1, 1, 9] [3, 3]
+          @?= [[Punkt 0 0, Punkt 1 0, Punkt 1 1]],
+      testCase "tom input gir ingen polygoner" $
+        polygonerFraFlate [] [] @?= ([] :: [Polygon]),
+      testCase "hjørnetall lengre enn det xy strekker til, fra start: ingen polygoner" $
+        polygonerFraFlate [0, 0] [5] @?= []
     ]

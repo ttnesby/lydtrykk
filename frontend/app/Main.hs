@@ -295,17 +295,15 @@ js_kildeInniHusrekke x y polyXY polyAntall = do
 
 -- | Polygonene fra flat hjørne-array [x0,y0,x1,y1,…] + antall hjørner per
 -- polygon (grensene mellom polygonene i den flate arrayen). Begge arrayene
--- bulk-kopieres inn ('lesFloat64') før de pakkes ut.
+-- bulk-kopieres inn ('lesFloat64'); selve parsingen/valideringen ligger i den
+-- rene, nativt testede 'Lyd.Felt.polygonerFraFlate' (ikke her), så et
+-- strukturelt ugyldig par (polyAntall som ikke stemmer med polyXY) klippes
+-- trygt der i stedet for å indeksere utenfor grensene her.
 lesPolygoner :: JSVal -> JSVal -> IO [Polygon]
 lesPolygoner polyXY polyAntall = do
   xy <- lesFloat64 polyXY
   antall <- lesFloat64 polyAntall
-  let antallHjoerner = [truncate (antall VS.! i) :: Int | i <- [0 .. VS.length antall - 1]]
-      gaa _ [] = []
-      gaa fra (n : rest) =
-        [Punkt (xy VS.! (2 * (fra + i))) (xy VS.! (2 * (fra + i) + 1)) | i <- [0 .. n - 1]]
-          : gaa (fra + n) rest
-  pure (gaa 0 antallHjoerner)
+  pure (polygonerFraFlate (VS.toList xy) (map truncate (VS.toList antall)))
 
 -- | Pumpene fra flat stride-3-array [x0,y0,retning0, x1,y1,retning1, …] med
 -- delt effektivt nivå 'src' (de gamle eksportene), bulk-kopiert inn
