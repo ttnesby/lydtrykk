@@ -1,11 +1,12 @@
-// FORSØK (gpu-spike.html), ikke produksjonskode: kart-simulatorens rutenett
+// FORSØK, ikke produksjonskode: kart-simulatorens rutenett
 // (kumulativt dB per celle fra alle utedeler, med husrekke-maskering og
 // -skjerming) regnet i en WebGPU compute shader (WGSL), for å måle fart og
 // avvik mot Haskell-kjernen (Lyd.Felt.rutenettStripeSkjermet via WASM).
 //
 // Dette ER en andre implementasjon av modellen – stikk i strid med
-// «én implementasjon»-prinsippet i CLAUDE.md – og finnes bare for å gi
-// grunnlag for en beslutning. Ingenting i den vanlige kartflyten bruker den.
+// «én implementasjon»-prinsippet i CLAUDE.md. Den brukes av testsiden
+// gpu-spike.html og av kartsimulatoren bak avkrysningsboksen «GPU (forsøk)»
+// (av som standard; WASM-workerne er standard og reserve).
 //
 // Fordeling CPU/GPU:
 // - Alt som bare avhenger av kilde og polygon (ikke av cellen) regnes én gang
@@ -108,7 +109,22 @@ export function gyldigeHusrekker(polys) {
 // eksakte i float32) for å halvere størrelsen på tallene.
 export const MASKERT = -1.0e30;
 
-export const WGSL = /* wgsl */ `
+// Konservativ margin i sikttesten (krysser() under), i meter: en kryssing
+// teller bare som skjermende når begge endepunktene av hvert segment ligger
+// mer enn EPS_SIKT_M fra det andre segmentets linje. Tvilstilfeller – der
+// float32 og kjernens float64 kan svare ulikt – blir da «ikke skjermet», så
+// GPU-en vipper mot for HØYT nivå, aldri for lavt.
+//
+// Verdien er en avveiing (målt med gpu-spike.html, se rapporten): uten
+// margin vippet 4 siktlinjer mot «skjermet» på GPU-en, alle < 1,2 µm fra et
+// polygonhjørne; float32-avrundingen av koordinatene (±160 m fra origo) er
+// opptil ~8 µm. Men kjernen skjermer fullt (−10 dB) så snart siktlinja så vidt
+// klipper et hjørne, så marginen gjør en kile bak hvert hjørne uskjermet, og
+// antallet celler som blir for høye vokser lineært med ε: 1 mm ga 2181 celler
+// (opptil 7,6 dB), 20 µm gir ~40–56 celler (≤ 2,4 dB) av ~300 000.
+export const EPS_SIKT_M = 2e-5;
+
+export const lagWgsl = (epsM) => /* wgsl */ `
 struct Param {
   kolonner: u32, rader: u32, nPumper: u32, nPoly: u32,
   celle: f32, medHus: u32, ordPoly: u32, ordKant: u32,
@@ -132,6 +148,7 @@ struct Param {
 @group(0) @binding(8) var<storage, read_write> ut: array<f32>;
 
 const MASKERT: f32 = ${MASKERT.toExponential()};
+const EPS_M: f32 = ${Number(epsM).toExponential()};
 const LOG2_10_DIV_2: f32 = 1.6609640474436813;   // log2(10)/2
 const DB_PER_LOG2: f32 = 3.0102999566398120;      // 10·log10(2)
 
@@ -148,10 +165,19 @@ fn kryss(px: f32, py: f32, qx: f32, qy: f32, rx: f32, ry: f32) -> f32 {
   return (qx - px) * (ry - py) - (qy - py) * (rx - px);
 }
 
-// Lyd.Felt.segmenterKrysser: bare ekte kryssing (streifing/berøring skjermer ikke)
-fn krysser(ax: f32, ay: f32, bx: f32, by: f32, k: vec4<f32>) -> bool {
-  return kryss(ax, ay, bx, by, k.x, k.y) * kryss(ax, ay, bx, by, k.z, k.w) < 0.0
-      && kryss(k.x, k.y, k.z, k.w, ax, ay) * kryss(k.x, k.y, k.z, k.w, bx, by) < 0.0;
+// Lyd.Felt.segmenterKrysser: bare ekte kryssing (streifing/berøring skjermer
+// ikke), pluss EPS_M-marginen (se EPS_SIKT_M): |kryssprodukt| / segmentlengde
+// er avstanden fra punktet til linja. epsAB = EPS_M · |ab| regnes én gang per
+// siktlinje i blokkert(). Med EPS_M = 0 er dette nøyaktig kjernens test.
+fn krysser(ax: f32, ay: f32, bx: f32, by: f32, epsAB: f32, k: vec4<f32>) -> bool {
+  let d1 = kryss(ax, ay, bx, by, k.x, k.y);
+  let d2 = kryss(ax, ay, bx, by, k.z, k.w);
+  if (d1 * d2 >= 0.0) { return false; }
+  let d3 = kryss(k.x, k.y, k.z, k.w, ax, ay);
+  let d4 = kryss(k.x, k.y, k.z, k.w, bx, by);
+  if (d3 * d4 >= 0.0) { return false; }
+  return min(abs(d1), abs(d2)) > epsAB
+      && min(abs(d3), abs(d4)) > EPS_M * length(k.zw - k.xy);
 }
 
 fn inne(x: f32, y: f32) -> bool {
@@ -174,13 +200,14 @@ fn inne(x: f32, y: f32) -> bool {
 fn blokkert(i: u32, ax: f32, ay: f32, x: f32, y: f32) -> bool {
   let lox = min(ax, x); let hix = max(ax, x);
   let loy = min(ay, y); let hiy = max(ay, y);
+  let epsAB = EPS_M * length(vec2<f32>(x - ax, y - ay));
   for (var j = 0u; j < P.nPoly; j++) {
     if (polyUnntatt(i, j)) { continue; }
     let b = boks[j];
     if (lox > b.z || hix < b.x || loy > b.w || hiy < b.y) { continue; }
     let s = spenn[j];
     for (var e = s.x; e < s.x + s.y; e++) {
-      if (krysser(ax, ay, x, y, kanter[e]) && !kantUnntatt(i, e)) { return true; }
+      if (krysser(ax, ay, x, y, epsAB, kanter[e]) && !kantUnntatt(i, e)) { return true; }
     }
   }
   return false;
@@ -293,7 +320,9 @@ export function forbered(pumps, polys, rows, cols, res) {
 // ---------------------------------------------------------------------------
 // GPU-vert. lagGpuFelt kompilerer pipelinen én gang; beregn() laster opp,
 // regner og leser tilbake – tiden den rapporterer er hele rundturen.
-export async function lagGpuFelt() {
+// epsM: sikttestens margin (standard EPS_SIKT_M; 0 = kjernens test uten
+// margin, brukt av gpu-spike.html for å måle effekten av marginen).
+export async function lagGpuFelt({ epsM = EPS_SIKT_M } = {}) {
   if (!navigator.gpu) throw new Error('navigator.gpu finnes ikke – nettleseren har ikke WebGPU');
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) throw new Error('requestAdapter() ga ingen adapter');
@@ -302,7 +331,7 @@ export async function lagGpuFelt() {
   });
   device.lost.then(info => console.error('[gpu] enheten tapt:', info.message));
   const t0 = performance.now();
-  const modul = device.createShaderModule({ code: WGSL });
+  const modul = device.createShaderModule({ code: lagWgsl(epsM) });
   const info = await modul.getCompilationInfo();
   const feil = info.messages.filter(m => m.type === 'error');
   if (feil.length) throw new Error('WGSL: ' + feil.map(m => `${m.lineNum}:${m.linePos} ${m.message}`).join('; '));
@@ -361,6 +390,10 @@ export async function lagGpuFelt() {
     // GPUAdapterInfo har getter-felter (ikke egne egenskaper) – kopier eksplisitt
     adapterInfo: Object.fromEntries(['vendor', 'architecture', 'device', 'description'].map(k => [k, adapter.info?.[k] ?? ''])),
     kompileringMs,
+    epsM,
+    // avgjøres (med GPUDeviceLostInfo) hvis enheten tapes – da må en ny
+    // lagGpuFelt() til
+    tapt: device.lost,
     // Hele rutenettet. Returnerer Float64Array (NaN for maskerte) + ms for
     // opplasting+beregning+tilbakelesing.
     async beregn(f) {

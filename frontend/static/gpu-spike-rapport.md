@@ -1,8 +1,12 @@
 # GPU-forsøk: kartsimulatorens rutenett i WebGPU
 
 Forsøk, ikke produksjon. Testsiden er `frontend/static/gpu-spike.html`, og
-shaderen og vertskoden ligger i `frontend/static/gpuFelt.js`. Ingenting i
-`lyd-core` eller i den vanlige kartflyten er endret.
+shaderen og vertskoden ligger i `frontend/static/gpuFelt.js`. `lyd-core` er
+ikke endret. Kartsimulatoren kan bruke shaderen bak avkrysningsboksen «GPU
+(forsøk)», som er av som standard (se «Oppfølging» nederst).
+
+Tabellene under «Resultater» er fra første runde, med sikttesten uten
+ε-margin. Effekten av marginen står under «Oppfølging».
 
 ## Hva som er sammenlignet
 
@@ -135,6 +139,97 @@ rundt 10 ganger kostnaden av det uskjermede feltet på GPU.
 - *Integrasjon:* både dra-oppførsel og en GPU-watchdog for større rutenett er
   ennå uprøvd. Én dispatch på 28 ms er langt unna noen watchdog-grense.
 
+## Oppfølging: bryter i kartet, ε-margin og dra
+
+Målt 19.10.2026 på samme maskin (Apple M5 Pro, Chromium 152 i Claude-appens
+nettleserpanel). Panelet var **synlig** under alle målingene
+(`document.visibilityState` = `visible` ved start og slutt). Kjernen er den
+deployede `app.wasm`, fordi det ikke finnes noe lokalt wasm-bygg.
+
+### ε-margin i sikttesten
+
+`krysser()` i shaderen teller nå en kryssing som skjermende bare når hvert
+endepunkt ligger mer enn ε fra det andre segmentets linje. Tvilstilfeller
+blir dermed uskjermet, altså litt for høyt nivå i stedet for litt for lavt.
+Testsiden kjører samme WASM-runde mot flere ε (`?eps=…`) og to celle-gitre
+(`?res=…`).
+
+| ε | Gitter | Celler > 0,01 dB **under** kjernen | Maks under (dB) | Celler > 0,01 dB **over** | Maks over (dB) |
+|---|---|---|---|---|---|
+| 0 | 0,5 m (326 508) | **3** | 0,21 | 1 | – |
+| 5 µm | 0,47 m (369 900) | 0 | 1,1·10⁻⁴ | 14 | 0,17 |
+| 10 µm | 0,5 m | 0 | 2,4·10⁻⁴ | 22 | 0,59 |
+| 10 µm | 0,47 m | 0 | 1,1·10⁻⁴ | 28 | 0,41 |
+| **20 µm (valgt)** | 0,5 m | **0** | 2,4·10⁻⁴ | 40 | 0,93 |
+| **20 µm (valgt)** | 0,47 m | **0** | 1,1·10⁻⁴ | 56 | 2,44 |
+| 50 µm | 0,5 m | 0 | 2,4·10⁻⁴ | 110 | 1,46 |
+| 1 mm | 0,5 m | 0 | 2,4·10⁻⁴ | 2181 | 7,61 |
+
+(Med ε = 0 på 0,47 m-gitteret: 1 celle under, maks 0,054 dB.)
+
+- **Med ε > 0 ligger GPU-en aldri under kjernen** i noen av kjøringene. Det
+  som gjenstår, er ren float32-støy (≤ 2,4·10⁻⁴ dB).
+- **Prisen er celler som blir for høye, og antallet vokser lineært med ε.**
+  Grunnen er at kjernen skjermer fullt (−10 dB) så snart siktlinja så vidt
+  klipper et hjørne. Marginen gjør en smal kile bak hvert polygonhjørne
+  uskjermet. 1 mm, som var første forslag, er altfor mye: da blir 2181
+  celler opptil 7,6 dB for høye. Alle disse ble sporet til siktlinjer under
+  1 mm fra et hjørne.
+- **Valgt ε = 20 µm** (`EPS_SIKT_M` i `gpuFelt.js`). Alle vippene mot «GPU
+  skjermer, kjernen ikke» lå under 1,2 µm fra et hjørne. float32-avrundingen
+  av koordinatene er likevel opptil ~8 µm så langt fra origo, så 20 µm gir
+  margin mot det. Det koster ~0,015 % av cellene (40–56), og de ligger
+  opptil 0,9–2,4 dB for høyt. Det er konservativt, men det er ingen garanti:
+  marginen er målt på to gitre over ett oppsett, ikke bevist.
+
+### Bryteren i kartet
+
+«GPU (forsøk)» i rutenett-gruppen kjører `forbered()` + `beregn()` med
+samme `pumpsLocal`/`husPolysLocal` og samme SV-origo som worker-poolen.
+Resultatet går inn i `lastGrid` og videre til `renderFyll`/`renderContours`.
+
+| 0,5 m, 326 508 celler, skjermet | WASM (pool 16) | GPU |
+|---|---|---|
+| Hel runde, inkl. tegning | 7,3–7,5 s | 79–117 ms (GPU 33–45 ms + forb. 2–6 ms + tegning 15–30 ms) |
+| Celler med ulik NaN-status | – | 0 |
+| Celler > 0,01 dB under / over WASM | – | 0 / 40 |
+| Celle×grense-par på ulik side av en aktiv grense | – | 2 av ~2,3 mill. |
+
+Konturene er visuelt like med GPU av og på (skjermbilder sammenlignet).
+Dra-oppførselen ble målt med syntetiske `mousemove`-hendelser (60 Hz i 4 s)
+på en utedel:
+
+| Under dra | WASM (DRAG_COARSEN = 3) | GPU (ingen grovning) |
+|---|---|---|
+| Oppløsning | 1,5 m (36 550 celler) | **0,5 m (326 508 celler)** |
+| Runder per sekund | 1,3 | **18,8** |
+| Tid per runde (median / maks) | 850 / 853 ms | 52 / 96 ms |
+| Animasjonsrammer (median / p95 / maks) | 13,3 / 13,4 / 14,4 ms | 13,3 / 13,9 / 40 ms |
+| Rammer over 50 ms | 0 | 0 |
+
+Slipp (ekte dra med nettleserverktøyet): med GPU kom siste fulle runde
+66 ms etter at musa ble sluppet, mot 7,5 s med WASM.
+
+**Vurdering av dra:** med GPU følger konturene utedelen i full oppløsning, med
+rundt 19 oppdateringer i sekundet. Med WASM kommer én grov oppdatering i
+sekundet, og det fine bildet først 7 s etter slipp. Derfor hopper
+`gridDims()` over `DRAG_COARSEN` når GPU-en er i bruk. Kostnaden er at
+konturer og fyll for 326 000 celler nå tegnes på hovedtråden for hver runde.
+Det ga enkelte rammer på opptil 40 ms, mot ~14 ms med workerne, men ingen
+over 50 ms. «Føles jevnt» er her lest ut av rammetidene. Det er ikke prøvd
+med en ekte hånd på musa.
+
+**Fallback:** uten WebGPU (simulert ved å skjule `navigator.gpu`) står
+feilen i infolinja («GPU-forsøket feilet (…) – regnet med WASM-workerne»),
+og runden regnes med workerne. Feilen er klebrig til boksen slås av og på
+igjen. Med boksen av er worker-stien uendret: 1,5 m under dra og full
+0,5 m-runde etter slipp.
+
+**Ikke dekket:** fasadepunktene (`acoustics_fasadeVerst…`) og «Forklar
+celle» bruker fortsatt kjernen. Forklaringen kan derfor i sjeldne
+hjørnetilfeller vise en annen skjermingsbeslutning enn GPU-rutenettet. Det er
+heller ikke testet i Safari eller Firefox, eller på svakere GPU-er.
+
 ## Kjøre forsøket
 
 Serve repo-rota (husrekkene lastes som `../../husrekker/polygoner/`), åpne
@@ -147,3 +242,6 @@ python3 -m http.server 8133
 
 Uten et lokalt wasm-bygg hentes den deployede `app.wasm`, så siden trenger
 nett.
+
+`?eps=0,1e-5,2e-5` velger hvilke ε som prøves (standard: 0, 10, 20 og 50 µm
+og 1 mm), og `?res=0.47` gir et annet celle-gitter over samme oppsett.

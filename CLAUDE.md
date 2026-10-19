@@ -212,6 +212,26 @@ that arrive before then), and a worker without a core — or with a binary too
 old to have `acoustics_gridStripe` — replies `{error: true}` so that grid
 round is skipped.
 
+**The one deliberate exception — an experiment, behind a switch:**
+`frontend/static/gpuFelt.js` is a WebGPU compute shader (WGSL, float32) that
+computes the map's grid field (`nivaaMedHindre` cell formula, masking, sight
+test), plus a JS port of `forenkletPolygon` and the source-inside-polygon /
+edge-within-1-m exemptions (float64, cross-checked bit-identical against the
+core). That *is* a second implementation, against the principle above. It is
+tolerated only because a full 0.5 m round drops from ~7 s (worker pool) to
+~0.1 s, and it is gated accordingly: the «GPU (forsøk)» checkbox in the grid
+group (`settings.gpuOn`, additive, **off by default**) makes
+`recomputeGrid` call `computeGridGpu` (one dispatch, same
+`pumpsLocal`/`husPolysLocal`/SW origin) and skip `DRAG_COARSEN` while
+dragging; with the box off, no WebGPU, or any GPU error, the unchanged worker
+pool computes the round and the error is shown in the grid info line
+(sticky until the box is toggled). The sight test has a conservative
+`EPS_SIKT_M` = 20 µm margin so float32 rounding near polygon corners tips
+towards *unshielded* (too loud), never too quiet. `gpu-spike.html` is the
+manual golden test against the core (run it after changing either side);
+`gpu-spike-rapport.md` has the measurements. Facade points and «Forklar
+celle» still use the core only.
+
 ### Runtime dependencies: vendored WASI shim, SRI-pinned Leaflet/MapLibre
 
 The WASI shim (`@bjorn3/browser_wasi_shim@0.3.0` dist files) is vendored in

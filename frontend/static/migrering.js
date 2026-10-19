@@ -57,6 +57,8 @@ export function normaliserOppsett(d) {
     // behold-nåværende-mønster som husrekke-bryterne over
     forklarOn: s.forklarOn != null ? !!s.forklarOn : null,
     forklarGrid: s.forklarGrid != null ? !!s.forklarGrid : null,
+    // «GPU (forsøk)»-bryteren for rutenettet (additivt, samme mønster)
+    gpuOn: s.gpuOn != null ? !!s.gpuOn : null,
     // eldre filer kan ha et 'nabos'-felt – det ignoreres stille, siden
     // rutenettet erstattet enkeltpunkt-sjekken
     pumps: (d.pumps || []).map(p => ({

@@ -84,6 +84,19 @@ test('husOn/husSkjerm/husVerst: additive felter – med i fila går gjennom, man
   assert.equal(uten.husVerst, null);
 });
 
+test('gpuOn: additivt felt – med i fila går gjennom, mangler → null', () => {
+  const med = normaliserOppsett({
+    format: 'lydnivakart', version: 3,
+    settings: { lyd: 50, vegg: false, kab: 0, gpuOn: true },
+  });
+  assert.equal(med.gpuOn, true);
+  const uten = normaliserOppsett({
+    format: 'lydnivakart', version: 3,
+    settings: { lyd: 50, vegg: false, kab: 0 },
+  });
+  assert.equal(uten.gpuOn, null);       // eldre fil → behold nåværende (av som standard)
+});
+
 test('pumps[].lokal: additivt felt – gyldig går gjennom, mangler/søppel → null', () => {
   const opp = normaliserOppsett({
     format: 'lydnivakart', version: 3,

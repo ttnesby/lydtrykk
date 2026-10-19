@@ -32,11 +32,17 @@ import { normaliserOppsett } from './migrering.js';
 import { normaliserHusrekke } from './husrekker.js';
 import { gridDimsFraOppsett, pumpsLocal, husPolysLocal } from './grid3d.js';
 import { initAcoustics } from './wasmInit.js';
-import { lagGpuFelt, forbered } from './gpuFelt.js';
+import { lagGpuFelt, forbered, EPS_SIKT_M } from './gpuFelt.js';
 
-const OPPLOSNING_M = 0.5;
+// ?res=0.47 gir et annet celle-gitter (andre siktlinjer) over samme oppsett
+const OPPLOSNING_M = Number(new URLSearchParams(location.search).get('res')) || 0.5;
 const MAX_CELLS = 400000;              // = lydnivakart.html
 const GPU_RUNDER = 5;                  // målte runder etter én oppvarming
+// Sikttestens ε-margin (gpuFelt.js) prøves med flere verdier mot samme
+// WASM-runde: 0 = kjernens test uten margin, som det første forsøket.
+// ?eps=0,1e-5,1e-4 overstyrer listen.
+const EPS_LISTE = new URLSearchParams(location.search).get('eps')?.split(',').map(Number)
+  ?? [...new Set([0, 1e-5, 2e-5, 5e-5, EPS_SIKT_M, 1e-3])].sort((a, b) => a - b);
 const POOL_SIZE = Math.min(16, Math.max(2, (navigator.hardwareConcurrency || 4) - 2));   // = lydnivakart.html
 // Lokalt (forsøket serveres fra repo-rota) før main, så tallene er reproduserbare mot sjekket-inn data.
 const HUS_BASER = ['../../husrekker/polygoner/', 'husrekker/polygoner/',
@@ -90,6 +96,8 @@ async function wasmRutenett(g, pumps, polys) {
 // ---- sammenligning -----------------------------------------------------------
 function sammenlign(w, g) {
   let nanUlik = 0, nanBegge = 0, n = 0, sum = 0, maks = 0, maksIdx = -1, over01 = 0, over001 = 0;
+  // retning: hvor mye LAVERE enn kjernen GPU-en ligger (det ikke-konservative avviket)
+  let maksLavere = 0, lavere001 = 0;
   const avvikere = [], nanAvvikere = [];
   for (let i = 0; i < w.length; i++) {
     const a = Number.isNaN(w[i]), b = Number.isNaN(g[i]);
@@ -98,10 +106,13 @@ function sammenlign(w, g) {
     const d = Math.abs(w[i] - g[i]);
     n++; sum += d;
     if (d > maks) { maks = d; maksIdx = i; }
+    const lav = w[i] - g[i];
+    if (lav > maksLavere) maksLavere = lav;
+    if (lav > 0.01) lavere001++;
     if (d > 0.1) over01++;
     if (d > 0.01) { over001++; avvikere.push(i); }   // diagnoseres (ulik skjermingsbeslutning?)
   }
-  return { endelige: n, snitt: sum / n, maks, maksIdx, over01, over001, nanUlik, nanBegge, avvikere, nanAvvikere };
+  return { endelige: n, snitt: sum / n, maks, maksIdx, over01, over001, maksLavere, lavere001, nanUlik, nanBegge, avvikere, nanAvvikere };
 }
 // Avvik uten cellene som har en kilde med ulik skjermingsbeslutning: ren float32-støy
 function stoy(w, g, utelat) {
@@ -163,7 +174,8 @@ const median = a => { const s = [...a].sort((x, y) => x - y); return s[Math.floo
 function radRapport(navn, r) {
   return `<tr><td>${navn}</td><td>${fmt(r.wasmMs, 0)}</td><td>${fmt(r.gpuMs, 1)} <span class="mute">(${r.gpuAlle.map(v => v.toFixed(0)).join(', ')})</span></td>
     <td>${fmt(r.cpuMs, 1)}</td><td>${fmt(r.wasmMs / r.gpuMs, 1)}×</td>
-    <td>${fmt(r.s.maks, 4)}</td><td>${r.s.snitt.toExponential(2)}</td><td>${r.s.nanUlik}</td><td>${r.s.over01}</td><td>${r.s.over001}</td></tr>`;
+    <td>${fmt(r.s.maks, 4)}</td><td>${r.s.snitt.toExponential(2)}</td><td>${r.s.nanUlik}</td><td>${r.s.over01}</td><td>${r.s.over001}</td>
+    <td>${r.s.maksLavere.toExponential(2)}</td><td>${r.s.lavere001}</td></tr>`;
 }
 
 async function kjor() {
@@ -183,20 +195,26 @@ async function kjor() {
   logg(`${pumps.length} utedeler, ${rekker.length} husrekker (${kilde}), rutenett ${g.cols}×${g.rows} = ${g.rows * g.cols} celler à ${g.res} m${g.coarsened ? ' (GROVNET!)' : ''}`);
 
   status('starter GPU …');
-  const gpu = await lagGpuFelt();
-  resultat.gpu = { ...gpu.adapterInfo, kompileringMs: gpu.kompileringMs };
-  logg(`GPU: ${JSON.stringify(gpu.adapterInfo)}; shader+pipeline ${gpu.kompileringMs.toFixed(0)} ms`);
+  const gpuer = await Promise.all(EPS_LISTE.map(epsM => lagGpuFelt({ epsM })));
+  const gpu = gpuer[0];
+  resultat.gpu = { ...gpu.adapterInfo, kompileringMs: gpu.kompileringMs, epsListe: EPS_LISTE };
+  logg(`GPU: ${JSON.stringify(gpu.adapterInfo)}; shader+pipeline ${gpu.kompileringMs.toFixed(0)} ms; ε = ${EPS_LISTE.join(', ')} m (standard ${EPS_SIKT_M})`);
 
   status(`starter ${POOL_SIZE} WASM-workere …`);
   await startPool(pumps);
   const wasm = await initAcoustics();   // hovedtråd-instans, bare til diagnosen (acoustics_forklarPunkt)
 
-  const varianter = [['A – uskjermet', null], ['B – skjermet + maskert', polys]];
+  const varianter = [['A – uskjermet', null, gpu],
+    ...gpuer.map(g => [`B – skjermet, ε = ${g.epsM} m${g.epsM === EPS_SIKT_M ? ' (standard)' : ''}`, polys, g])];
   resultat.varianter = {};
-  for (const [navn, p] of varianter) {
+  const wasmCache = new Map();   // B-variantene deler WASM-runden
+  for (const [navn, p, gpu] of varianter) {
     status(`${navn}: WASM …`); await vent();
-    const w = await wasmRutenett(g, pumps, p);
-    logg(`${navn}: WASM ${w.ms.toFixed(0)} ms (pool ${POOL_SIZE})${w.uskjermet ? ' USKJERMET-FALLBACK' : ''}${w.fellesnivaa ? ' FELLESNIVÅ-FALLBACK' : ''}`);
+    let w = wasmCache.get(p);
+    if (!w) {
+      w = await wasmRutenett(g, pumps, p); wasmCache.set(p, w);
+      logg(`${navn}: WASM ${w.ms.toFixed(0)} ms (pool ${POOL_SIZE})${w.uskjermet ? ' USKJERMET-FALLBACK' : ''}${w.fellesnivaa ? ' FELLESNIVÅ-FALLBACK' : ''}`);
+    } else logg(`${navn}: gjenbruker WASM-runden over`);
 
     status(`${navn}: GPU …`); await vent();
     const f = forbered(pumps, p, g.rows, g.cols, g.res);
@@ -222,6 +240,8 @@ async function kjor() {
       logg(`  avvik > 0,1 dB: ${s.over01} celler, > 0,01 dB: ${s.over001}; ${forklart}/${r.flipp.undersokt} av de siste forklares av ulik skjermingsbeslutning for minst én kilde (${flipp.length} kilde-flipp, største siktmargin ${fmt(r.flipp.maksMargin, 6)} m)`);
       logg(`  uten disse cellene: maks avvik ${r.stoy.maks.toExponential(2)} dB, snitt ${r.stoy.snitt.toExponential(2)} dB`);
       logg(`  NaN-status ulik: ${s.nanUlik} celler; største avstand til en polygonkant blant dem ${fmt(Math.max(0, ...r.nanMargin), 6)} m`);
+      logg(`  kilde-flipp: ${r.flipp.haskellBlokkGpuIkke} der kjernen skjermer og GPU-en ikke (GPU høyere), ${r.flipp.gpuBlokkHaskellIkke} der GPU-en skjermer og kjernen ikke (GPU LAVERE)`);
+      logg(`  GPU lavere enn kjernen: maks ${s.maksLavere.toExponential(2)} dB, ${s.lavere001} celler > 0,01 dB lavere`);
     }
     resultat.varianter[navn] = { ...r, s: { ...s, avvikere: s.avvikere.length, nanAvvikere: s.nanAvvikere.length } };
   }
@@ -230,7 +250,7 @@ async function kjor() {
   logg(`document.visibilityState ved slutt: ${resultat.synligVedSlutt}`);
 
   $('ut').innerHTML = `<table>
-    <tr><th>Variant</th><th>WASM ms</th><th>GPU ms (median)</th><th>CPU-forb. ms</th><th>Faktor</th><th>maks |Δ| dB</th><th>snitt |Δ| dB</th><th>NaN ulik</th><th>&gt; 0,1 dB</th><th>&gt; 0,01 dB</th></tr>
+    <tr><th>Variant</th><th>WASM ms</th><th>GPU ms (median)</th><th>CPU-forb. ms</th><th>Faktor</th><th>maks |Δ| dB</th><th>snitt |Δ| dB</th><th>NaN ulik</th><th>&gt; 0,1 dB</th><th>&gt; 0,01 dB</th><th>maks GPU under WASM, dB</th><th>celler &gt; 0,01 dB under</th></tr>
     ${Object.entries(resultat.varianter).map(([n, r]) => radRapport(n, r)).join('')}
   </table>
   <p class="mute">${resultat.celler} celler · ${resultat.pumper} utedeler · ${resultat.husrekker} husrekker · WASM-pool ${POOL_SIZE} workere ·
