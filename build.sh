@@ -42,7 +42,12 @@ cp "$WASM" dist/app.wasm
 if [ "${WASM_OPT:-1}" = "0" ]; then
   echo "hopper over wasm-opt (WASM_OPT=0)" >&2
 elif command -v wasm-opt >/dev/null 2>&1; then
-  wasm-opt -all -Oz dist/app.wasm -o dist/app.wasm.opt
+  # IKKE -all: da får optimalisereren bruke ALLE features binaryen kjenner,
+  # også eksperimentelle som nettlesere ikke støtter. binaryen 133 skrev
+  # dermed «compact imports» (import kind 0x7e) og exact-heap-typer, og
+  # app.wasm lot seg ikke kompilere i noen nettleser. Uten flagg brukes
+  # featurene binæren selv deklarerer (target_features fra wasm-ld).
+  wasm-opt -Oz dist/app.wasm -o dist/app.wasm.opt
   mv dist/app.wasm.opt dist/app.wasm
 else
   echo "advarsel: wasm-opt ikke funnet — hopper over størrelsesoptimalisering" >&2
