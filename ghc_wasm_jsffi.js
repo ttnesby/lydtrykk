@@ -39,17 +39,11 @@ class JSValManager {
 // To benchmark different setImmediate() implementations in the
 // browser, use https://github.com/jphpsf/setImmediate-shim-demo as a
 // starting point.
-const setImmediate = await (async () => {
-  // node, bun, or other scripts might have set this up in the browser
+const setImmediate = (() => {
+  // node, deno, bun, or other scripts might have set this up in the
+  // browser
   if (globalThis.setImmediate) {
     return globalThis.setImmediate;
-  }
-
-  // deno
-  if (globalThis.Deno) {
-    try {
-      return (await import("node:timers")).setImmediate;
-    } catch {}
   }
 
   // https://developer.mozilla.org/en-US/docs/Web/API/Scheduler/postTask
@@ -102,33 +96,33 @@ ZC14ZCfrontendzm0zi1zi0zi0zminplacezmappZCMainZC: ($1,$2,$3) => ($1.set(new Floa
 ZC15ZCfrontendzm0zi1zi0zi0zminplacezmappZCMainZC: ($1,$2,$3) => (new Float64Array(__exports.memory.buffer, $2, $3).set($1)),
 ZC16ZCfrontendzm0zi1zi0zi0zminplacezmappZCMainZC: ($1,$2) => ($1[$2]),
 ZC17ZCfrontendzm0zi1zi0zi0zminplacezmappZCMainZC: ($1) => ($1.length),
-ZC0ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziJSONZC: ($1) => {return globalThis.miso.typeOf($1);},
-ZC2ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziJSONZC: ($1) => {return JSON.stringify($1);},
-ZC2ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => {return $1.length},
-ZC5ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => {return requestAnimationFrame($1);},
-ZC6ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1,$2) => {return $2[$1]},
-ZC7ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => {return $1},
-ZC8ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => {return $1},
-ZC9ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => {return $1},
-ZC11ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1,$2) => {return $2[$1]},
-ZC12ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: () => {return {}},
-ZC14ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1,$2,$3) => ($3[$1]=$2),
-ZC16ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1,$2,$3) => {return $1.apply($2, $3);},
-ZC17ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => {return Object.keys($1);},
-ZC23ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => ((...args) => __exports.ghczuwasmzujsffiZC22ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC($1, ...args)),
-ZC31ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => ((...args) => __exports.ghczuwasmzujsffiZC30ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC($1, ...args)),
-ZC33ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => ((...args) => __exports.ghczuwasmzujsffiZC32ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC($1, ...args)),
-ZC37ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => ((...args) => __exports.ghczuwasmzujsffiZC36ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC($1, ...args)),
-ZC39ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => ((...args) => __exports.ghczuwasmzujsffiZC38ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC($1, ...args)),
-ZC42ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: () => {return globalThis},
-ZC43ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: () => {return null;},
-ZC51ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1,$2) => ($1.push($2)),
-ZC52ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: () => {return [];},
-ZC53ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => {return $1},
-ZC54ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => {return $1},
-ZC55ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziDSLziFFIZC: ($1) => {if ($1 === 0.0) return false;
+ZC0ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziJSONZC: ($1) => {return globalThis.miso.typeOf($1);},
+ZC2ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziJSONZC: ($1) => {return JSON.stringify($1);},
+ZC2ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => {return $1.length},
+ZC5ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => {return requestAnimationFrame($1);},
+ZC6ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1,$2) => {return $2[$1]},
+ZC7ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => {return $1},
+ZC8ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => {return $1},
+ZC9ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => {return $1},
+ZC11ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1,$2) => {return $2[$1]},
+ZC12ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: () => {return {}},
+ZC14ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1,$2,$3) => ($3[$1]=$2),
+ZC16ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1,$2,$3) => {return $1.apply($2, $3);},
+ZC17ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => {return Object.keys($1);},
+ZC23ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => ((...args) => __exports.ghczuwasmzujsffiZC22ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC($1, ...args)),
+ZC31ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => ((...args) => __exports.ghczuwasmzujsffiZC30ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC($1, ...args)),
+ZC33ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => ((...args) => __exports.ghczuwasmzujsffiZC32ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC($1, ...args)),
+ZC37ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => ((...args) => __exports.ghczuwasmzujsffiZC36ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC($1, ...args)),
+ZC39ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => ((...args) => __exports.ghczuwasmzujsffiZC38ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC($1, ...args)),
+ZC42ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: () => {return globalThis},
+ZC43ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: () => {return null;},
+ZC51ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1,$2) => ($1.push($2)),
+ZC52ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: () => {return [];},
+ZC53ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => {return $1},
+ZC54ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => {return $1},
+ZC55ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziDSLziFFIZC: ($1) => {if ($1 === 0.0) return false;
 return true;},
-ZC0ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCMisoziRuntimeZC: () => {// ts/miso/util.ts
+ZC0ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCMisoziRuntimeZC: () => {// ts/miso/util.ts
 var version = "1.9.0.0";
 function callFocus(id, delay) {
   var setFocus = function() {
@@ -1419,12 +1413,12 @@ globalThis["miso"] = {
   }
 };
 },
-ZC1ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCDataziJSStringZC: ($1) => {return ($1).toString()},
-ZC2ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCDataziJSStringZC: ($1) => {return ($1).toString()},
-ZC3ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCDataziJSStringZC: () => {return ''},
-ZC4ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCDataziJSStringZC: ($1,$2) => {return $1 + $2},
-ZC5ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCDataziJSStringZC: ($1,$2) => {return $1 === $2},
-ZC6ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCDataziJSStringZC: ($1,$2) => {if ($1 < 1) { return ''; }
+ZC1ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCDataziJSStringZC: ($1) => {return ($1).toString()},
+ZC2ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCDataziJSStringZC: ($1) => {return ($1).toString()},
+ZC3ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCDataziJSStringZC: () => {return ''},
+ZC4ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCDataziJSStringZC: ($1,$2) => {return $1 + $2},
+ZC5ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCDataziJSStringZC: ($1,$2) => {return $1 === $2},
+ZC6ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCDataziJSStringZC: ($1,$2) => {if ($1 < 1) { return ''; }
 else if ($1 === 1) { return $2; }
 else {
   const inc = $2;
@@ -1433,10 +1427,10 @@ else {
   }
   return $2;
 }},
-ZC7ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCDataziJSStringZC: ($1,$2) => {if ($1 === $2) return 0;
+ZC7ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCDataziJSStringZC: ($1,$2) => {if ($1 === $2) return 0;
 else if ($1 > $2) return 1;
 else return -1;},
-ZC41ZCmisozm1zi11zi0zi0zmd6c379528d99df572e0aff01df46b2af1134efbf23ad81fd904fbcdd0a4d6c3dZCDataziJSStringZC: ($1,$2) => {return $1 + String.fromCharCode($2);},
+ZC41ZCmisozm1zi11zi0zi0zm9637a5cdccad7d234b5e93baad949a298b8ac537ec6d3cc75db4a7b184c03a81ZCDataziJSStringZC: ($1,$2) => {return $1 + String.fromCharCode($2);},
 ZC0ZCghczminternalZCGHCziInternalziWasmziPrimziExportsZC: ($1,$2) => ($1.reject(new WebAssembly.RuntimeError($2))),
 ZC19ZCghczminternalZCGHCziInternalziWasmziPrimziExportsZC: ($1) => ($1.resolve()),
 ZC20ZCghczminternalZCGHCziInternalziWasmziPrimziExportsZC: ($1) => {$1.throwTo = () => {};},

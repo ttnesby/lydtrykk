@@ -9,6 +9,7 @@ import {
   gridDimsFraOppsett, pumpsLocal, husPolysLocal,
   husrekkerGeoJSON, tredjeEtasjeGeoJSON, veggerGeoJSON,
 } from './grid3d.js';
+import { beregnStripe } from './acousticsStripe.js';
 
 const SESSION_KEY = 'lydnivakart3d:config';
 
@@ -109,34 +110,12 @@ function beregnRutenett(opp, husRekker, acoustics) {
   const pl = pumpsLocal(opp.pumps, sw, globale);
   const medHus = opp.husOn && opp.husSkjerm;
   const polys = medHus ? husPolysLocal(husRekker, sw) : null;
-  const medSkjerm = !!(polys && polys.antall.length > 0);
-  const perKilde = typeof acoustics.acoustics_gridStripePerKilde === 'function';
   const values = new Float64Array(rows * cols);
-  let uskjermet = false, fellesnivaa = false;
-
-  if (pl.length === 0) {
-    values.fill(-Infinity);
-  } else if (perKilde) {
-    const xybn = new Float64Array(pl.length * 4);
-    pl.forEach((p, i) => { xybn[i * 4] = p.x; xybn[i * 4 + 1] = p.y; xybn[i * 4 + 2] = p.brg; xybn[i * 4 + 3] = p.nivaa; });
-    if (medSkjerm && typeof acoustics.acoustics_gridStripeSkjermetPerKilde === 'function') {
-      acoustics.acoustics_gridStripeSkjermetPerKilde(xybn, polys.xy, polys.antall, 0, rows, cols, res, values);
-    } else {
-      uskjermet = medSkjerm;
-      acoustics.acoustics_gridStripePerKilde(xybn, 0, rows, cols, res, values);
-    }
-  } else {
-    const felles = Math.max(...pl.map(p => p.nivaa));
-    fellesnivaa = pl.some(p => p.nivaa !== felles);
-    const xyb = new Float64Array(pl.length * 3);
-    pl.forEach((p, i) => { xyb[i * 3] = p.x; xyb[i * 3 + 1] = p.y; xyb[i * 3 + 2] = p.brg; });
-    if (medSkjerm && typeof acoustics.acoustics_gridStripeSkjermet === 'function') {
-      acoustics.acoustics_gridStripeSkjermet(felles, xyb, polys.xy, polys.antall, 0, rows, cols, res, values);
-    } else {
-      uskjermet = medSkjerm;
-      acoustics.acoustics_gridStripe(felles, xyb, 0, rows, cols, res, values);
-    }
-  }
+  // Dispatch-logikken (pumpearray + PerKilde/Skjermet/legacy-feature-detect)
+  // er delt med gridWorker.js via acousticsStripe.js – se den modulens
+  // kommentar for hvorfor. Ett synkront kall (rowStart=0, rowEnd=rows) i
+  // stedet for en worker-pool, se filens egen kommentar lenger opp.
+  const { uskjermet, fellesnivaa } = beregnStripe(acoustics, pl, polys, 0, rows, cols, res, values);
   return { grid: values, rows, cols, res, sw, uskjermet, fellesnivaa, coarsened };
 }
 

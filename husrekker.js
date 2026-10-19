@@ -49,6 +49,20 @@ function normaliserPolygon(polygon){
   return pkt.map(([e,n])=>utm33TilLatLng(e,n));
 }
 
+// Escaper HTML-spesialtegn i en streng – brukes på 'navn' før den settes inn
+// i en mal-streng som tolkes som HTML (Leaflets bindTooltip, lydnivakart.html).
+// Husrekke-filene redigeres i dag kun av repo-eieren, men 'navn' kommer fra
+// JSON på disk, ikke fra kildekoden – ingen teknisk grunn til å stole blindt
+// på innholdet i en mal-streng som faktisk kjøres som HTML i andres nettleser.
+export function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Normaliserer ett husrekke-objekt
 // {navn, crs, polygon:[[øst,nord],...], tredjeEtasje?:[[[øst,nord],...],...]}
 // til {navn, punkter:[{lat,lng},...], tredjeEtasje:[[{lat,lng},...],...]}.
