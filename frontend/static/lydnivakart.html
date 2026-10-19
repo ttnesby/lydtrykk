@@ -210,9 +210,13 @@
       <div class="felt" style="margin-left:22px">
         <label class="ck"><input type="checkbox" id="forklarGrid" checked> Vis rutenett-linjer</label>
       </div>
+      <div class="felt">
+        <label class="ck" title="Eksperiment: regner rutenettet i en WebGPU compute shader – en andre implementasjon av modellen ved siden av beregningskjernen. Av: den vanlige WASM-beregningen."><input type="checkbox" id="gpuOn"> GPU (forsøk)</label>
+      </div>
       <p class="note" id="gridinfo"></p>
       <div id="forklarPanel"></div>
       <p class="note">De to blå hjørnene i kartet setter rutenettets område (nedre venstre / øvre høyre) – dra dem dit du vil dekke. Kumulativt lydnivå for hver rute regnes i bakgrunnen (en pool av Web Workers, én WASM-instans hver) og oppdateres automatisk når du flytter en utedel, endrer lydkilde eller drar et hjørne. Avslått viser kartet i stedet hver utedels egen halvbue.</p>
+      <p class="note">«GPU (forsøk)» regner i stedet hele rutenettet i én omgang på grafikkortet (WebGPU) – raskt nok til full oppløsning også mens du drar. Det er et eksperiment med en egen kopi av regnemodellen; uten WebGPU, eller hvis GPU-en feiler, brukes workerne som vanlig, og infolinja sier fra.</p>
       <p class="note">«Forklar celle» smetter klikket til nærmeste rutenettpunkt og tegner en stråle fra hver utedel dit – blå/heltrukket for fri sikt, rød/stiplet der en husrekke skjermer (−10 dB). Tabellen under viser avstand, vinkel og nivå per utedel, samt totalen. «Vis rutenett-linjer» gjør prøvepunktene litt synlige i kartet.</p>
     </div>
 
@@ -680,7 +684,9 @@ const DRAG_COARSEN=3;
 // delt med 3D-siden via grid3d.js sin testede 'gridDimsFraOppsett' – samme
 // regnestykke, bare med DRAG_COARSEN lagt på oppløsningen her under drag.
 function gridDims(){
-  const res0=gridRes*(interacting?DRAG_COARSEN:1);
+  // GPU-stien regner et fullt 0,5 m-rutenett på noen titalls ms – der trengs
+  // ingen grovning under drag (se gpuAktiv)
+  const res0=gridRes*(interacting&&!gpuAktiv()?DRAG_COARSEN:1);
   return gridDimsFraOppsett({sw:corners.sw, ne:corners.ne, res:res0}, MAX_CELLS);
 }
 
@@ -737,6 +743,7 @@ function setGridOn(on){
   document.getElementById('gridres').disabled=!on;
   document.getElementById('forklarOn').disabled=!on;
   document.getElementById('forklarGrid').disabled=!on;
+  document.getElementById('gpuOn').disabled=!on;
   if(on){
     if(!map.hasLayer(swMarker)) swMarker.addTo(map);
     if(!map.hasLayer(neMarker)) neMarker.addTo(map);
@@ -988,6 +995,47 @@ function sluttFramdrift(reqId,avbrutt){
   framdrift=null;
 }
 
+// ---- GPU (forsøk) ----
+// Eksperiment bak avkrysningsboksen «GPU (forsøk)», av som standard: hele
+// rutenettet i én WebGPU-dispatch (gpuFelt.js), med samme pumpsLocal/
+// husPolysLocal og samme SV-origo som worker-poolen. Shaderen er en ANDRE
+// implementasjon av modellen (float32, egen WGSL-kopi av celleformelen og
+// sikttesten) – stikk i strid med «én implementasjon» – og er derfor bare et
+// forsøk; WASM-workerne er standard og reserve. Feiler GPU-en (ingen WebGPU,
+// ingen adapter, valideringsfeil, tapt enhet), regnes runden med workerne og
+// feilen står i rutenett-infolinja. Feilen er klebrig til boksen slås av og
+// på igjen, så en ødelagt GPU ikke prøves (og feiler) på nytt hver runde.
+// gpuFelt.js lastes først når boksen slås på.
+let gpuFelt=null, gpuLofte=null, gpuFeil=null, gpuSisteMs=null;
+function gpuAktiv(){ return document.getElementById('gpuOn').checked && !gpuFeil; }
+function hentGpu(){
+  if(!gpuLofte){
+    gpuLofte=import('./gpuFelt.js').then(async m=>{
+      const g=await m.lagGpuFelt();
+      g.modul=m;
+      g.tapt.then(info=>{
+        if(gpuFelt!==g) return;
+        gpuFelt=null; gpuLofte=null;
+        gpuFeil='GPU-enheten ble tapt'+(info&&info.message?` (${info.message})`:'');
+        scheduleGrid();
+      });
+      gpuFelt=g;
+      return g;
+    });
+  }
+  return gpuLofte;
+}
+function nullstillGpu(){ gpuFeil=null; gpuLofte=gpuFelt?Promise.resolve(gpuFelt):null; }
+async function computeGridGpu(rows,cols,res,origin){
+  const reqId=++gridReqSeq;
+  const g=await hentGpu();
+  const f=g.modul.forbered(pumpsLocal(origin),husPolysLocal(origin),rows,cols,res);
+  const r=await g.beregn(f);
+  gpuSisteMs={cpu:f.cpuMs, gpu:r.gpuMs};
+  if(reqId!==gridReqSeq) return null;   // en nyere forespørsel har overtatt i mellomtiden
+  return { grid:r.verdier, gpu:true };
+}
+
 function computeGrid(rows,cols,res,origin){
   if(!gridWorkers.length) return Promise.resolve(null);
   const reqId=++gridReqSeq;
@@ -1064,13 +1112,28 @@ async function recomputeGrid(){
   if(!gridOn||!corners.sw||!corners.ne) return;
   const {sw,res,cols,rows,coarsened}=gridDims();
   updateGridInfo(cols,rows,res,coarsened);
-  const utfall=await computeGrid(rows,cols,res,sw);
+  let utfall=null;
+  if(gpuAktiv()){
+    try{ utfall=await computeGridGpu(rows,cols,res,sw); }
+    catch(e){
+      gpuFeil=(e&&e.message)||String(e);
+      console.warn('GPU-beregningen feilet – regner med WASM-workerne:',e);
+    }
+  }
+  const gpuFeilet=document.getElementById('gpuOn').checked && gpuFeil;
+  if(!utfall && !gpuAktiv()) utfall=await computeGrid(rows,cols,res,sw);
   if(!utfall) return;
   updateGridInfo(cols,rows,res,coarsened);   // tilbake fra stripe-telleren
   lastGrid={grid:utfall.grid,rows,cols,res,sw};
+  const tRender=performance.now();
   renderFyll(lastGrid);
   renderContours(lastGrid);
   renderForklarGrid(lastGrid);
+  const el=document.getElementById('gridinfo');
+  if(utfall.gpu && el && gpuSisteMs){
+    el.textContent+=` · GPU (forsøk): ${gpuSisteMs.gpu.toFixed(0)} ms + forb. ${gpuSisteMs.cpu.toFixed(0)} ms + tegning ${(performance.now()-tRender).toFixed(0)} ms`;
+  }
+  if(gpuFeilet && el) el.textContent+=` · GPU-forsøket feilet (${gpuFeil}) – regnet med WASM-workerne`;
   if(utfall.uskjermet){
     const el=document.getElementById('gridinfo');
     if(el) el.textContent+=' · kjernen mangler skjerming-eksporten (eldre binær) – regnet uten husskjerming (konservativt)';
@@ -1272,6 +1335,7 @@ document.getElementById('forklarOn').addEventListener('change',e=>{
   renderForklarGrid(lastGrid);
 });
 document.getElementById('forklarGrid').addEventListener('change',()=>renderForklarGrid(lastGrid));
+document.getElementById('gpuOn').addEventListener('change',()=>{ nullstillGpu(); scheduleGrid(); });
 document.getElementById('clear').addEventListener('click',()=>{
   [...pumps].forEach(p=>removePump(p.id));
   pumpNo=0; sel=null; positionControls(); renderValgt(); updateCounts();
@@ -1294,6 +1358,7 @@ function snapshot(){
       husVerst:document.getElementById('husVerst').checked,
       forklarOn:document.getElementById('forklarOn').checked,
       forklarGrid:document.getElementById('forklarGrid').checked,
+      gpuOn:document.getElementById('gpuOn').checked,
     },
     // 'lokal' bare når utedelen har egne verdier (additivt felt – eldre
     // filer/lesere er upåvirket, ingen versjonsbump)
@@ -1327,6 +1392,7 @@ function restore(d){
   if(opp.husVerst!=null) document.getElementById('husVerst').checked=opp.husVerst;
   if(opp.forklarOn!=null) document.getElementById('forklarOn').checked=opp.forklarOn;
   if(opp.forklarGrid!=null) document.getElementById('forklarGrid').checked=opp.forklarGrid;
+  if(opp.gpuOn!=null){ document.getElementById('gpuOn').checked=opp.gpuOn; nullstillGpu(); }
   husEndret();   // synk underboksenes deaktivert-tilstand + tegning med lastet fil
   opp.pumps.forEach(p=>{ addPump(L.latLng(p.lat,p.lng),p.brg,p.num,p.lokal); });
   pumpNo=pumps.reduce((m,p)=>Math.max(m,p.num),0);
