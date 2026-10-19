@@ -57,6 +57,7 @@ FLAVOUR=9.12 sh bootstrap.sh
 source ~/.ghc-wasm/env
 
 ./build.sh                       # -> dist/ (app.wasm + static files)
+node scripts/sjekk-wasm.mjs      # smoke test: dist/app.wasm compiles + instantiates
 python3 -m http.server -d dist   # open http://localhost:8000
 ```
 
@@ -504,10 +505,31 @@ On load, `lydnivakart.html` fetches
 `paths-ignore` on this file for exactly that reason. If the raw fetch fails
 (offline/CORS), it falls back to the bundled copy shipped in `dist/`.
 
-### CI (`.github/workflows/test-build-deploy.yml`)
+### CI (`.github/workflows/deploy.yml`, workflow name `test-build-deploy`)
 
-`test` (native GHC, `cabal test all`) → `build` (`ghc-wasm-meta` bootstrap +
-`./build.sh`) → deploy. Pushes to `main` deploy to the `gh-pages` root; open
-PRs get a preview under `gh-pages/pr-preview/pr-<N>/`, cleaned up when the PR
-closes. `[skip ci]`/`[ci skip]`/etc. in a commit message (push/PR only, not
-manual dispatch) skips the whole workflow.
+`test` (native GHC, `cabal test all`) → `build` (`ghc-wasm-meta` install +
+`./build.sh` + wasm smoke test) → deploy. Pushes to `main` deploy to the
+`gh-pages` root; open PRs get a preview under `gh-pages/pr-preview/pr-<N>/`,
+cleaned up when the PR closes. `[skip ci]`/`[ci skip]`/etc. in a commit
+message (push/PR only, not manual dispatch) skips the whole workflow.
+
+- **Wasm smoke test** (`scripts/sjekk-wasm.mjs`, run right after
+  `./build.sh`): `WebAssembly.compile` on `dist/app.wasm` in plain node (no
+  `--experimental-wasm-*` flags, i.e. V8's default-on features — the same
+  baseline as Chrome, not a guarantee for Safari/Firefox), then instantiation
+  following `wasmInit.js`'s pattern (vendored WASI shim + the paired
+  `ghc_wasm_jsffi.js`) and one real `acoustics_grense(0, 0)` call. A failure
+  fails `build`, so no artifact is uploaded and neither deploy job runs. It
+  exists because binaryen 133 + `wasm-opt -all -Oz` once produced a binary
+  using experimental features («compact imports», import kind 0x7e;
+  exact heap types) that no browser could compile — while every other CI
+  step stayed green and production showed «Beregningskjernen kunne ikke
+  lastes». This is also why `build.sh` runs `wasm-opt -Oz` *without* `-all`.
+  Note that PRs build with `WASM_OPT=0`, so wasm-opt's output is only
+  smoke-tested on pushes to `main` (still before `deploy-main`).
+- **Pinned toolchain**: `ghc-wasm-meta` is installed from a fixed commit
+  (`GHC_WASM_META_REV` in the `build` job) rather than `bootstrap.sh` from
+  `master`, and the toolchain cache key includes that commit (no
+  `restore-keys`, which would restore a toolchain for a different pin and
+  skip installation). Bumping the toolchain = changing that one SHA; the
+  local install instructions above still track `master`.

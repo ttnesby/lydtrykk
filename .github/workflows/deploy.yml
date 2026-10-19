@@ -73,6 +73,13 @@ jobs:
   build:
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: ubuntu-latest
+    env:
+      # ghc-wasm-meta pinnes til en bestemt commit i stedet for master, slik at
+      # verktøykjeden (GHC-bindist, binaryen, wasi-sdk, …) bare endres når vi
+      # selv flytter pinnen. Oppdatering: sett ny commit fra
+      # https://gitlab.haskell.org/haskell-wasm/ghc-wasm-meta/-/commits/master
+      # – cache-nøkkelen under følger med, så neste kjøring installerer på nytt.
+      GHC_WASM_META_REV: 8079eb96bbc63823d99ad8acaff0765532625474
     steps:
       - uses: actions/checkout@v4
 
@@ -81,9 +88,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ghc-wasm
-          key: ghc-wasm-9.12-${{ runner.os }}
-          restore-keys: |
-            ghc-wasm-9.12-${{ runner.os }}-
+          # Ingen restore-keys: en delvis treff ville gjenopprettet verktøykjeden
+          # for en ANNEN pin, og installasjonssteget under hopper over når
+          # ~/.ghc-wasm/env allerede finnes.
+          key: ghc-wasm-9.12-${{ runner.os }}-${{ env.GHC_WASM_META_REV }}
 
       - name: Cache wasm build products
         uses: actions/cache@v4
@@ -93,11 +101,15 @@ jobs:
           restore-keys: |
             wasm-build-${{ runner.os }}-
 
-      - name: Install ghc-wasm-meta (GHC 9.12 flavour)
+      # Tilsvarer bootstrap.sh fra ghc-wasm-meta, men henter arkivet for den
+      # pinnede commiten i stedet for master (bootstrap.sh henter alltid master).
+      - name: Install ghc-wasm-meta (GHC 9.12 flavour, pinnet)
         run: |
           if [ ! -f "$HOME/.ghc-wasm/env" ]; then
-            curl -f -L --retry 5 https://gitlab.haskell.org/haskell-wasm/ghc-wasm-meta/-/raw/master/bootstrap.sh -o /tmp/bootstrap.sh
-            FLAVOUR=9.12 sh /tmp/bootstrap.sh
+            mkdir -p /tmp/ghc-wasm-meta
+            curl -f -L --retry 5 "https://gitlab.haskell.org/haskell-wasm/ghc-wasm-meta/-/archive/$GHC_WASM_META_REV/ghc-wasm-meta-$GHC_WASM_META_REV.tar.gz" \
+              | tar xz --strip-components=1 -C /tmp/ghc-wasm-meta
+            (cd /tmp/ghc-wasm-meta && FLAVOUR=9.12 ./setup.sh)
           fi
 
       - name: Build wasm frontend
@@ -105,6 +117,15 @@ jobs:
           SKIP_CABAL_UPDATE: ${{ steps.wasm-toolchain-cache.outputs.cache-hit == 'true' && '1' || '0' }}
           WASM_OPT: ${{ github.event_name == 'pull_request' && '0' || '1' }}
         run: ./build.sh
+
+      # Røyktest: dist/app.wasm må kunne kompileres og instansieres med
+      # standard WebAssembly (node uten eksperimentelle flagg). Feiler steget,
+      # lastes ingen artefakt opp, og deploy-jobbene (needs: build) kjører ikke.
+      # Bakgrunn: binaryen 133 + `wasm-opt -all` ga en binær ingen nettleser
+      # kunne kompilere, mens resten av CI var grønn. Merk at PR-er bygger med
+      # WASM_OPT=0, så wasm-opt-utdata sjekkes først ved push til main.
+      - name: Smoke-test app.wasm (kompilering + instansiering)
+        run: node scripts/sjekk-wasm.mjs dist
 
       - name: Upload dist artifact
         uses: actions/upload-artifact@v4
