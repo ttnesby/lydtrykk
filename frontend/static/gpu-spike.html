@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPU-forsøk: lydfelt</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1a1a1a; --bg: #fafafa; --mute: #666; --linje: #ddd; --ok: #15803d; --feil: #b91c1c; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #e5e5e5; --bg: #161616; --mute: #999; --linje: #333; --ok: #4ade80; --feil: #f87171; } }
+  body { font: 14px/1.45 system-ui, sans-serif; color: var(--fg); background: var(--bg); margin: 0; padding: 16px; max-width: 980px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.mute, .mute { color: var(--mute); }
+  button { font: inherit; padding: 6px 14px; }
+  table { border-collapse: collapse; margin: 12px 0; width: 100%; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--linje); font-variant-numeric: tabular-nums; }
+  th { font-weight: 600; }
+  pre { white-space: pre-wrap; font-size: 12px; background: color-mix(in srgb, var(--fg) 6%, transparent); padding: 8px; overflow-x: auto; }
+  .ok { color: var(--ok); } .feil { color: var(--feil); }
+</style>
+</head>
+<body>
+<h1>GPU-forsøk: kumulativt lydfelt</h1>
+<p class="mute">Forsøk, ikke en del av kartsimulatoren. Regner default-oppsettets rutenett (0,5 m) både med
+Haskell-kjernen (WASM, samme worker-pool og gridWorker.js som kartsiden) og med en WebGPU compute shader
+(gpuFelt.js), og sammenligner cellene.</p>
+<p><button id="kjor" disabled>Kjør forsøket</button> <span id="status" class="mute">laster …</span></p>
+<div id="ut"></div>
+<pre id="logg"></pre>
+
+<script type="module">
+import { normaliserOppsett } from './migrering.js';
+import { normaliserHusrekke } from './husrekker.js';
+import { gridDimsFraOppsett, pumpsLocal, husPolysLocal } from './grid3d.js';
+import { initAcoustics } from './wasmInit.js';
+import { lagGpuFelt, forbered } from './gpuFelt.js';
+
+const OPPLOSNING_M = 0.5;
+const MAX_CELLS = 400000;              // = lydnivakart.html
+const GPU_RUNDER = 5;                  // målte runder etter én oppvarming
+const POOL_SIZE = Math.min(16, Math.max(2, (navigator.hardwareConcurrency || 4) - 2));   // = lydnivakart.html
+// Lokalt (forsøket serveres fra repo-rota) før main, så tallene er reproduserbare mot sjekket-inn data.
+const HUS_BASER = ['../../husrekker/polygoner/', 'husrekker/polygoner/',
+  'https://raw.githubusercontent.com/ttnesby/lydtrykk/main/husrekker/polygoner/'];
+
+const $ = id => document.getElementById(id);
+const logg = s => { $('logg').textContent += s + '\n'; console.log('[spike]', s); };
+const status = s => { $('status').textContent = s; };
+const vent = () => new Promise(r => setTimeout(r, 0));
+
+async function hentJson(url) { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error(url + ': HTTP ' + r.status); return r.json(); }
+async function hentHusrekker() {
+  for (const base of HUS_BASER) {
+    let filer; try { ({ filer } = await hentJson(base + 'index.json')); } catch { continue; }
+    const rekker = await Promise.all(filer.map(f => hentJson(base + f).then(normaliserHusrekke)));
+    return { rekker, kilde: base };
+  }
+  throw new Error('fant ingen husrekker');
+}
+
+// ---- WASM: samme pool og samme gridWorker.js som kartsiden -------------------
+let pool = [], reqId = 0;
+function workerJobb(w, melding) {
+  return new Promise((resolve, reject) => {
+    const id = ++reqId;
+    const h = e => { if (e.data.reqId !== id) return; w.removeEventListener('message', h); e.data.error ? reject(new Error('worker uten kjerne')) : resolve(e.data); };
+    w.addEventListener('message', h);
+    w.postMessage({ ...melding, reqId: id });
+  });
+}
+async function startPool(pumps) {
+  pool = Array.from({ length: POOL_SIZE }, () => new Worker('gridWorker.js', { type: 'module' }));
+  // oppvarming: hver worker laster sin wasm-instans før noe måles
+  await Promise.all(pool.map(w => workerJobb(w, { rowStart: 0, rowEnd: 1, cols: 2, cellSizeM: 1, pumps: pumps.slice(0, 1), polys: null })));
+}
+async function wasmRutenett(g, pumps, polys) {
+  const t = performance.now();
+  const perWorker = Math.ceil(g.rows / pool.length);
+  const deler = await Promise.all(pool.map((w, i) => {
+    const rowStart = i * perWorker, rowEnd = Math.min(g.rows, rowStart + perWorker);
+    if (rowStart >= rowEnd) return null;
+    return workerJobb(w, { rowStart, rowEnd, cols: g.cols, cellSizeM: g.res, pumps, polys });
+  }));
+  const ms = performance.now() - t;
+  const verdier = new Float64Array(g.rows * g.cols);
+  let uskjermet = false, fellesnivaa = false;
+  for (const d of deler) if (d) { verdier.set(d.values, d.rowStart * g.cols); uskjermet ||= d.uskjermet; fellesnivaa ||= d.fellesnivaa; }
+  return { verdier, ms, uskjermet, fellesnivaa };
+}
+
+// ---- sammenligning -----------------------------------------------------------
+function sammenlign(w, g) {
+  let nanUlik = 0, nanBegge = 0, n = 0, sum = 0, maks = 0, maksIdx = -1, over01 = 0, over001 = 0;
+  const avvikere = [], nanAvvikere = [];
+  for (let i = 0; i < w.length; i++) {
+    const a = Number.isNaN(w[i]), b = Number.isNaN(g[i]);
+    if (a !== b) { nanUlik++; nanAvvikere.push(i); continue; }
+    if (a) { nanBegge++; continue; }
+    const d = Math.abs(w[i] - g[i]);
+    n++; sum += d;
+    if (d > maks) { maks = d; maksIdx = i; }
+    if (d > 0.1) over01++;
+    if (d > 0.01) { over001++; avvikere.push(i); }   // diagnoseres (ulik skjermingsbeslutning?)
+  }
+  return { endelige: n, snitt: sum / n, maks, maksIdx, over01, over001, nanUlik, nanBegge, avvikere, nanAvvikere };
+}
+// Avvik uten cellene som har en kilde med ulik skjermingsbeslutning: ren float32-støy
+function stoy(w, g, utelat) {
+  const ut = new Set(utelat); let maks = 0, sum = 0, n = 0;
+  for (let i = 0; i < w.length; i++) {
+    if (ut.has(i) || Number.isNaN(w[i]) || Number.isNaN(g[i])) continue;
+    const d = Math.abs(w[i] - g[i]); n++; sum += d; if (d > maks) maks = d;
+  }
+  return { maks, snitt: sum / n };
+}
+
+// Geometrisk margin (float64): hvor nær er siktlinja kilde→celle en
+// degenerert konfigurasjon (et polygonhjørne på linja, eller et endepunkt på
+// en kant)? Små tall = ekte avrundingskant, ikke en modellforskjell.
+function segAvst(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2));
+  return Math.hypot(px - ax - t * dx, py - ay - t * dy);
+}
+function siktMargin(gyldige, ax, ay, bx, by) {
+  let m = Infinity;
+  for (const poly of gyldige) for (let k = 0; k < poly.length; k++) {
+    const c = poly[k], d = poly[(k + 1) % poly.length];
+    // bare kanter i nærheten av linja er relevante
+    if (segAvst(c.x, c.y, ax, ay, bx, by) > 1 && segAvst(d.x, d.y, ax, ay, bx, by) > 1 && segAvst(bx, by, c.x, c.y, d.x, d.y) > 1) continue;
+    m = Math.min(m, segAvst(c.x, c.y, ax, ay, bx, by), segAvst(bx, by, c.x, c.y, d.x, d.y));
+  }
+  return m;
+}
+function kantMargin(gyldige, x, y) {
+  let m = Infinity;
+  for (const poly of gyldige) for (let k = 0; k < poly.length; k++) {
+    const c = poly[k], d = poly[(k + 1) % poly.length];
+    m = Math.min(m, segAvst(x, y, c.x, c.y, d.x, d.y));
+  }
+  return m;
+}
+
+async function diagnose(f, gpu, wasm, pumps, polys, celler) {
+  const xybn = new Float64Array(pumps.length * 4);
+  pumps.forEach((p, i) => xybn.set([p.x, p.y, p.brg, p.nivaa], i * 4));
+  const ut = new Float64Array(pumps.length * 4);
+  const flipp = [];   // {idx, pumpe, haskell, gpu, margin}
+  for (const idx of celler) {
+    const kol = idx % f.cols, rad = Math.floor(idx / f.cols), x = kol * f.res, y = rad * f.res;
+    wasm.acoustics_forklarPunkt(x, y, xybn, polys.xy, polys.antall, ut);
+    const gpuBlokk = await gpu.blokkertPerPumpe(f, idx);
+    for (let i = 0; i < pumps.length; i++) {
+      const hs = ut[i * 4 + 3] < ut[i * 4 + 2];
+      if (hs !== gpuBlokk[i]) flipp.push({ idx, kol, rad, pumpe: i, haskell: hs, gpu: gpuBlokk[i], margin: siktMargin(f.gyldige, pumps[i].x, pumps[i].y, x, y) });
+    }
+  }
+  return flipp;
+}
+
+const fmt = (v, d = 3) => Number.isFinite(v) ? v.toFixed(d) : String(v);
+const median = a => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+
+function radRapport(navn, r) {
+  return `<tr><td>${navn}</td><td>${fmt(r.wasmMs, 0)}</td><td>${fmt(r.gpuMs, 1)} <span class="mute">(${r.gpuAlle.map(v => v.toFixed(0)).join(', ')})</span></td>
+    <td>${fmt(r.cpuMs, 1)}</td><td>${fmt(r.wasmMs / r.gpuMs, 1)}×</td>
+    <td>${fmt(r.s.maks, 4)}</td><td>${r.s.snitt.toExponential(2)}</td><td>${r.s.nanUlik}</td><td>${r.s.over01}</td><td>${r.s.over001}</td></tr>`;
+}
+
+async function kjor() {
+  $('kjor').disabled = true; $('ut').innerHTML = ''; $('logg').textContent = '';
+  const synlig = document.visibilityState;
+  logg(`document.visibilityState ved start: ${synlig}`);
+  const resultat = { synligVedStart: synlig, poolStorrelse: POOL_SIZE, hardwareConcurrency: navigator.hardwareConcurrency, ua: navigator.userAgent };
+  window.__spike = resultat;
+
+  status('laster oppsett og husrekker …');
+  const opp = normaliserOppsett(await hentJson('default.json?t=' + Date.now()));
+  const { rekker, kilde } = await hentHusrekker();
+  const g = gridDimsFraOppsett({ ...opp.grid, res: OPPLOSNING_M }, MAX_CELLS);
+  const pumps = pumpsLocal(opp.pumps, g.sw, { lyd: opp.lyd, vegg: opp.vegg, kab: opp.kab });
+  const polys = husPolysLocal(rekker, g.sw);
+  Object.assign(resultat, { pumper: pumps.length, husrekker: rekker.length, husKilde: kilde, rader: g.rows, kolonner: g.cols, celler: g.rows * g.cols, res: g.res, grovnet: g.coarsened });
+  logg(`${pumps.length} utedeler, ${rekker.length} husrekker (${kilde}), rutenett ${g.cols}×${g.rows} = ${g.rows * g.cols} celler à ${g.res} m${g.coarsened ? ' (GROVNET!)' : ''}`);
+
+  status('starter GPU …');
+  const gpu = await lagGpuFelt();
+  resultat.gpu = { ...gpu.adapterInfo, kompileringMs: gpu.kompileringMs };
+  logg(`GPU: ${JSON.stringify(gpu.adapterInfo)}; shader+pipeline ${gpu.kompileringMs.toFixed(0)} ms`);
+
+  status(`starter ${POOL_SIZE} WASM-workere …`);
+  await startPool(pumps);
+  const wasm = await initAcoustics();   // hovedtråd-instans, bare til diagnosen (acoustics_forklarPunkt)
+
+  const varianter = [['A – uskjermet', null], ['B – skjermet + maskert', polys]];
+  resultat.varianter = {};
+  for (const [navn, p] of varianter) {
+    status(`${navn}: WASM …`); await vent();
+    const w = await wasmRutenett(g, pumps, p);
+    logg(`${navn}: WASM ${w.ms.toFixed(0)} ms (pool ${POOL_SIZE})${w.uskjermet ? ' USKJERMET-FALLBACK' : ''}${w.fellesnivaa ? ' FELLESNIVÅ-FALLBACK' : ''}`);
+
+    status(`${navn}: GPU …`); await vent();
+    const f = forbered(pumps, p, g.rows, g.cols, g.res);
+    if (p) logg(`  forberedt: ${f.nPoly} polygoner, ${f.nKant} kanter etter forenkling; ${f.antPolyUnntak} pumpe×polygon-unntak (kilde inni), ${f.antKantUnntak} pumpe×kant-unntak (< 1 m)`);
+    await gpu.beregn(f);   // oppvarming
+    const tider = []; let gRes;
+    for (let k = 0; k < GPU_RUNDER; k++) { gRes = await gpu.beregn(f); tider.push(gRes.gpuMs); }
+    logg(`  GPU ${tider.map(t => t.toFixed(1)).join(' / ')} ms (median ${median(tider).toFixed(1)})`);
+
+    const s = sammenlign(w.verdier, gRes.verdier);
+    const r = { wasmMs: w.ms, gpuMs: median(tider), gpuAlle: tider, cpuMs: f.cpuMs, s };
+    if (p) {
+      status(`${navn}: diagnose av avvikende celler …`); await vent();
+      const flipp = await diagnose(f, gpu, wasm, pumps, p, s.avvikere.slice(0, 400));
+      const cellerMedFlipp = new Set(flipp.map(x => x.idx));
+      const forklart = s.avvikere.slice(0, 400).filter(i => cellerMedFlipp.has(i)).length;
+      r.flipp = { celler: flipp.map(x => ({ kol: x.kol, rad: x.rad, pumpe: x.pumpe, haskell: x.haskell, margin: x.margin })), undersokt: Math.min(400, s.avvikere.length), forklartAvFlipp: forklart, antallFlipp: flipp.length,
+        maksMargin: Math.max(...flipp.map(x => x.margin)), eksempler: flipp.slice(0, 12),
+        haskellBlokkGpuIkke: flipp.filter(x => x.haskell && !x.gpu).length, gpuBlokkHaskellIkke: flipp.filter(x => !x.haskell && x.gpu).length };
+      r.stoy = stoy(w.verdier, gRes.verdier, [...cellerMedFlipp]);
+      r.nanMargin = s.nanAvvikere.map(i => kantMargin(f.gyldige, (i % g.cols) * g.res, Math.floor(i / g.cols) * g.res));
+      r.nanDetaljer = s.nanAvvikere.slice(0, 20).map((i, k) => ({ idx: i, wasmNaN: Number.isNaN(w.verdier[i]), gpuNaN: Number.isNaN(gRes.verdier[i]), margin: r.nanMargin[k] }));
+      logg(`  avvik > 0,1 dB: ${s.over01} celler, > 0,01 dB: ${s.over001}; ${forklart}/${r.flipp.undersokt} av de siste forklares av ulik skjermingsbeslutning for minst én kilde (${flipp.length} kilde-flipp, største siktmargin ${fmt(r.flipp.maksMargin, 6)} m)`);
+      logg(`  uten disse cellene: maks avvik ${r.stoy.maks.toExponential(2)} dB, snitt ${r.stoy.snitt.toExponential(2)} dB`);
+      logg(`  NaN-status ulik: ${s.nanUlik} celler; største avstand til en polygonkant blant dem ${fmt(Math.max(0, ...r.nanMargin), 6)} m`);
+    }
+    resultat.varianter[navn] = { ...r, s: { ...s, avvikere: s.avvikere.length, nanAvvikere: s.nanAvvikere.length } };
+  }
+  pool.forEach(w => w.terminate());
+  resultat.synligVedSlutt = document.visibilityState;
+  logg(`document.visibilityState ved slutt: ${resultat.synligVedSlutt}`);
+
+  $('ut').innerHTML = `<table>
+    <tr><th>Variant</th><th>WASM ms</th><th>GPU ms (median)</th><th>CPU-forb. ms</th><th>Faktor</th><th>maks |Δ| dB</th><th>snitt |Δ| dB</th><th>NaN ulik</th><th>&gt; 0,1 dB</th><th>&gt; 0,01 dB</th></tr>
+    ${Object.entries(resultat.varianter).map(([n, r]) => radRapport(n, r)).join('')}
+  </table>
+  <p class="mute">${resultat.celler} celler · ${resultat.pumper} utedeler · ${resultat.husrekker} husrekker · WASM-pool ${POOL_SIZE} workere ·
+  GPU ${resultat.gpu.vendor || ''} ${resultat.gpu.architecture || ''} · synlig: ${synlig}/${resultat.synligVedSlutt}.
+  GPU-tiden omfatter opplasting, beregning og tilbakelesing; CPU-forberedelsen (forenkling + unntaksmasker) er i egen kolonne.</p>`;
+  status('ferdig'); $('kjor').disabled = false;
+  return resultat;
+}
+
+window.kjorForsok = () => kjor().catch(e => { status('FEIL: ' + e.message); logg(e.stack || String(e)); throw e; });
+$('kjor').onclick = () => window.kjorForsok();
+$('kjor').disabled = false; status(navigator.gpu ? 'klar' : 'denne nettleseren har ikke WebGPU (navigator.gpu mangler)');
+</script>
+</body>
+</html>
